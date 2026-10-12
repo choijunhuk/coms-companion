@@ -2,7 +2,9 @@ name: Verify Companion
 on:
   push:
     branches: [main]
+    paths-ignore: ['**/*.md']
   pull_request:
+    paths-ignore: ['**/*.md']
 permissions:
   contents: read
 jobs:
@@ -17,6 +19,11 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm run audit:public
+      - name: Korean system fonts for browser rendering
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-noto-cjk
+          fc-match :lang=ko
       - name: Real browser response and lost-save recovery
         run: node scripts/browser-smoke.ts
       - name: Fixture screenshots for sandbox visual inspection
