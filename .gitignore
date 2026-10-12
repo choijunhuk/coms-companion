@@ -1,0 +1,49 @@
+# Local settings and credentials
+.env
+.env.*
+!.env.example
+local.properties
+keystore.properties
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+
+# User data and exports
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+data/
+backups/
+private-data/
+exports/
+logs/
+*.log
+
+# Build products and local tooling
+.gradle/
+build/
+node_modules/
+dist/
+coverage/
+.idea/
+.vscode/
+*.iml
+*.apk
+*.aab
+.DS_Store
+Thumbs.db
+
+# Attached archive and session-only evidence
+COMs_Companion_Development_Kit.zip
+.omx/
+.omc/
+.tmp/
+artifacts/
+*.hprof
+*.tsbuildinfo
+playwright-report/
+test-results/
