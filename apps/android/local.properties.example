@@ -1,0 +1,4 @@
+# Copy to local.properties. Keep real keys out of Git.
+sdk.dir=/Users/you/Library/Android/sdk
+kakao.nativeAppKey=
+kakao.shareUrl=

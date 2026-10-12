@@ -1,6 +1,6 @@
 # 공개 GitHub 저장소와 이어하기
 
-목표는 인증된 개인 GitHub 계정의 공개 저장소 coms-companion에 소스와 개발 문서를 유지하는 것입니다. 예정 계정은 choijunhuk입니다. 사용자 최종 요청에 따라 생성·첫 커밋·푸시는 메타프롬프트를 실행하는 후속 개발 작업에 포함했습니다. 현재 실제 게시 여부는 STATUS.md 및 git remote로 확인합니다.
+인증된 choijunhuk 계정으로 [coms-companion](https://github.com/choijunhuk/coms-companion) Public 저장소와 main 첫 커밋을 게시했다. 다음 세션은 새 저장소를 생성하지 않고 현재 Git/CI와 STATUS.md를 확인해 이어간다. 아래는 첫 게시 절차 기록이다.
 
 ## GitHub CLI로 처음 게시하는 경우
 

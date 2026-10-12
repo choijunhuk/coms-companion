@@ -25,7 +25,7 @@ type PaymentRequest = {
 };
 type ResponseContext = {
   event: EventView;
-  access: {kind: 'common' | 'personal' | 'submission'; state: 'open' | 'closed' | 'cancelled' | 'expired' | 'revoked'; canPay: boolean; message: string};
+  access: {kind: 'common' | 'personal' | 'submission'; state: 'open' | 'closed' | 'cancelled' | 'expired' | 'revoked'; scopes: ('rsvp'|'notice'|'vote'|'payment')[]; canPay: boolean; message: string};
   submission: SubmissionView | null; paymentRequests: PaymentRequest[];
 };
 ```

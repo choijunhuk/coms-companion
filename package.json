@@ -1,0 +1,19 @@
+{
+  "name": "coms-companion",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": ["apps/web", "apps/server"],
+  "engines": {"node": ">=24 <25"},
+  "scripts": {
+    "dev": "npm run dev --workspace @coms/server",
+    "dev:web": "npm run dev --workspace @coms/web",
+    "build": "npm run build --workspaces",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm test --workspaces --if-present",
+    "check": "npm run typecheck && npm test && npm run build",
+    "start": "npm start --workspace @coms/server",
+    "audit:public": "python3 scripts/check-public.py"
+  },
+  "devDependencies": {"typescript": "7.0.2", "@types/node": "24.19.2"}
+}

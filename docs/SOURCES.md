@@ -2,7 +2,7 @@
 
 확인일: **2026-10-12**
 
-이 문서는 COM’s Companion의 메타프롬프트와 후속 개발 판단을 위한 출처 기록이다. 현재 묶음은 기획·작업 인계 자료이며, Android 앱 구현이나 실기 문자 발송이 검증된 상태가 아니다. 아래의 **공식 문서에서 확인한 사실**, **프로젝트 설계 권장사항**, **미확인 사항**을 구분한다. 요금제·정책·SDK는 구현 시점에 다시 확인한다.
+이 문서는 공식 출처 기록이다. 첫 구현/검증은 STATUS.md에 있으며 실기 문자 발송은 미검증이다. 공식 사실·설계 결정·미확인 사항을 구분한다.
 
 ## 1. SKT 기본 제공 문자와 자동발송
 
@@ -54,3 +54,11 @@
 - 카카오 앱 등록·권한 승인·실제 공유 동작, 선택적 Ollama 실행·연결 환경.
 
 이 항목들을 확인하기 전에는 무료 자동발송, Play 승인, 전달·읽음 추적, 앱 구현 완료를 확정하지 않는다.
+
+## 7. 첫 구현 버전 선택 (2026-10-12 재확인)
+
+- AGP9.2.1 / Gradle9.4.1 / JDK17 / SDK36. [AGP](https://developer.android.com/build/releases/agp-9-2-0-release-notes), [내장 Kotlin](https://developer.android.com/build/migrate-to-built-in-kotlin). Compose compiler2.2.10, KSP2.3.10. 전체 의존성 호환성은 CI 빌드로 최종 확인한다.
+- [Compose 설정](https://developer.android.com/develop/ui/compose/setup-compose-dependencies-and-compiler)에 따라 API36용 BOM2026.06.00 선택. 최신 Compose의 API37 요구와 설치 SDK를 구별한다.
+- [Room](https://developer.android.com/jetpack/androidx/releases/room)2.8.5, [DataStore](https://developer.android.com/jetpack/androidx/releases/datastore)1.2.1, [WorkManager](https://developer.android.com/jetpack/androidx/releases/work)2.11.2, [Kakao](https://developers.kakao.com/docs/en/android/download)2.25.0. [shareDefault 결과](https://developers.kakao.com/docs/en/kakaotalk-share/android-link)는 공유 Intent 준비이며 실제 전송 확인이 아니다.
+- [Node 릴리스](https://nodejs.org/dist/index.json)24.21.0 LTS. 기존 Node25 대신 검증에 사용한다. [내장 SQLite](https://nodejs.org/download/release/latest-v24.x/docs/api/sqlite.html)는 release candidate이며 작은 단일 프로세스에서 사용한다. 동기식 처리량과 업그레이드 호환성을 배포 전 확인한다.
+- [Fastify](https://fastify.dev/docs/latest/)5.12.5, React19.3.0, [Vite8](https://vite.dev/blog/announcing-vite8.html)8.3.4, TypeScript7.0.2. 공식 문서와 npm 원본 레지스트리 확인. package.json과 package-lock.json으로 버전/해시 고정.

@@ -1,41 +1,58 @@
 # COM’s Companion
 
-동아리 회장을 위한 안드로이드 운영 앱과 회원용 응답 웹을 만드는 프로젝트입니다.
+동아리 운영을 한곳에서. Android 운영 앱, 회원 응답 웹, Fastify/SQLite 서버의 첫 구현입니다. 첫 실행은 빈 데이터이며 외부 LLM·유료 문자 API·알림톡을 사용하지 않습니다.
 
-**현재 상태: 제품·디자인·개발 지시서가 준비된 시작 문서 묶음입니다. 앱 소스, 실행 가능한 APK, 웹 서비스는 아직 구현되지 않았습니다.**
+## 지원 기능
 
-공개 GitHub 저장소 생성은 사용자의 최종 요청에 따라 메타프롬프트를 실행하는 다음 개발 AI의 작업으로 포함했습니다. 이 묶음 자체가 원격 저장소 생성 완료를 의미하지 않습니다.
+- Android: 홈/회원/행사/회비/연락, Room 저장, 회원 편집·필터·CSV 검토, 행사·수동 참석/출석, 회비 청구·납부·면제·환불·정정 이력, 할 일, 템플릿·개인별 미리보기·초안/기록, 연락 알림, 테마 설정.
+- 문자: 한 명씩 기본 문자 앱에 번호와 본문 전달. 운영자가 직접 전송하며 앱 전달·사용자 발송 확인을 분리합니다.
+- 카카오: 실제 키/도메인 설정이 있을 때 공식 공유 SDK, 미설정 시 일반 공유·복사 대안. SDK 실패는 표시하며 실제 전송 완료를 추정하지 않습니다.
+- 회원 웹: 행사 안내·참석 응답·안내 확인·일정 투표·개인 입금 확인 요청, 검토·제출·수정. 불확실 저장은 원래 작업으로 재확인합니다.
+- 서버: 인증, 행사/응답 버전, 해시된 초대 토큰, 개인/공통/자기 제출 수정 권한, 만료·취소·마감·정원·충돌·재시도, 명시적 회원 연결/입금 검토 API.
+- Android 온라인: 수동 행사 게시·공통/개인 링크 발급·응답 스냅샷 가져오기. 서버 저장 확인 후에만 링크를 표시합니다.
 
-## 확정한 방향
+수동 응답 최초 서버 이관, 게시 후 운영자 응답 수정·충돌 검토, 자동 동기화, 앱 잠금, 보호된 백업/복구는 아직 없습니다. 수동 응답이 있는 행사 게시와 게시 후 로컬 응답 수정을 차단합니다. 서버는 공개 배포되지 않았습니다. 최신 검증은 [STATUS](docs/STATUS.md)를 확인하세요.
 
-- 회장용 Android 앱을 중심으로 회원, 행사, 회비, 연락 준비, 할 일을 관리합니다.
-- 외부 LLM 호출 없이 템플릿과 실제 데이터 치환으로 안내문을 작성합니다.
-- 문자는 기본 문자 앱의 작성 화면을 열어 운영자가 직접 전송합니다.
-- 카카오톡은 공식 공유 기능으로 운영자가 친구 또는 채팅방을 선택합니다.
-- 부원은 작은 모바일 웹에서 앱 설치 없이 행사에 응답합니다.
-- 유료 문자 API, 알림톡, 유료 AI는 기본 비활성화입니다.
+## Android 실행
 
-## 처음 읽을 문서
+JDK17, Android SDK36. [Android 안내](apps/android/README.md)에 따라 local.properties.example을 local.properties로 복사해 SDK 경로를 지정합니다. 실제 Kakao 설정이 있을 때만 키/등록 도메인을 입력합니다.
 
-| 문서 | 역할 |
-| --- | --- |
-| [META_PROMPT.md](META_PROMPT.md) | 개발 AI에게 전달할 전체 메타프롬프트 |
-| [docs/UI_UX.md](docs/UI_UX.md) | 색상·타이포·화면·동작·상태 디자인 명세 |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 앱·웹·서버 구성과 데이터 소유권 |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | 구현 순서와 완료 기준 |
-| [docs/STATUS.md](docs/STATUS.md) | 현재 완료 상태와 다음 작업 |
-| [docs/SOURCES.md](docs/SOURCES.md) | 2026-10-12 확인한 공식 기술·이용 조건 |
-| [AGENTS.md](AGENTS.md) | 다음 개발 세션의 작업 원칙 |
-| [docs/GITHUB_SETUP.md](docs/GITHUB_SETUP.md) | 공개 저장소 게시 및 이어하기 방법 |
+```sh
+cd apps/android
+./gradlew testDebugUnitTest lintDebug assembleDebug
+```
 
-## 바로 이어서 개발하기
+APK: apps/android/app/build/outputs/apk/debug/app-debug.apk. GitHub Actions android-verification 아티팩트에 성공한 빌드와 보고서를 보관합니다. 실기/실문자 검증을 뜻하지 않습니다.
 
-개발 AI에게 이 프로젝트 폴더를 열어 주고 다음을 전달합니다.
+## 웹·서버 실행
 
-> AGENTS.md와 META_PROMPT.md, docs/STATUS.md를 읽고 현재 상태에서 이어서 구현해 줘. META_PROMPT.md §12대로 공개 GitHub 저장소 생성·첫 커밋·푸시까지 수행하고, docs/UI_UX.md의 디자인과 docs/ARCHITECTURE.md의 구조를 따라 docs/ROADMAP.md의 다음 미완료 단계부터 진행해 줘. 핵심 기능은 외부 LLM 크레딧 없이 동작해야 해. 구현과 실기 검증 결과를 구분해서 기록하고 공개 저장소에는 코드와 개발 문서만 동기화해 줘.
+Node24.21.0 LTS와 npm. SQLite는 Node 내장 모듈이며 별도 DB 서비스가 필요 없습니다.
 
-## 실제 지원 범위
+```sh
+nvm use
+npm ci
+npm run check
+cp .env.example .env
+```
 
-SKT 기본 제공 문자를 자동발송 프로그램으로 무제한 사용할 수 있다고 전제하지 않습니다. 기본 문자 작성 화면 연결과 실제 자동 전송은 별개입니다. 카카오 공유 역시 기존 단톡방을 지정한 무인 예약 발송 기능이 아닙니다. 자세한 근거는 [공식 자료](docs/SOURCES.md)에 있습니다.
+.env의 ADMIN_TOKEN은 32자 이상의 무작위 비밀값, SERVER_ENCRYPTION_KEY는 무작위 32바이트의 64자리 hex로 각각 설정합니다. 환경파일은 비공개로 보관합니다. 암호화 키 변경 시 기존 재시도 영수증을 읽을 수 없으므로 키를 보존하세요.
 
-공개 저장소에는 실제 회원 연락처, 회비 기록, 문자 내용, 데이터베이스, 비밀키, 서명키를 저장하지 않습니다. 회원 데이터는 앱의 비공개 저장소와 필요한 범위의 인증된 서버에서 관리합니다.
+```sh
+npm start
+```
+
+기본 http://localhost:3000에서 웹 빌드와 API를 함께 제공합니다. 개발 API는 npm run dev, 웹은 npm run dev:web입니다. Vite 프록시 사용 시 허용 출처 설정을 맞춰야 하며 통합 확인은 단일 서버에서 합니다.
+
+실제 HTTPS 호스트를 PUBLIC_BASE_URL과 Android에 동일하게 설정한 뒤에만 링크를 공유합니다. 디버그 에뮬레이터는 http://10.0.2.2:3000을 허용합니다. 공개 소스 게시에 기존 COM’s 서버 변경·공개 배포·실제 회원 발송은 포함되지 않습니다.
+
+## 데이터와 비용
+
+회원/회비 원장은 Android Room, 온라인 응답은 서버 SQLite가 원본입니다. 입금 요청은 주장 기록이며 납부 완료가 아닙니다. 이름/번호 자동 회원 연결, GET/스크랩의 상태 변경은 하지 않습니다.
+
+문자 비용은 가입 요금제, 카카오 공유는 제공 쿼터, 서버 비용은 배포 환경 기준입니다. 실제 회원 데이터·DB·키·토큰·서명키는 Git에서 제외합니다. npm run audit:public은 추적 파일의 개인 파일/알려진 키 형식을 검사하며 개인정보 수동 검토를 대신하지 않습니다.
+
+현재 앱은 OS 백업을 끄며 파일 백업/복구가 없습니다. 앱 삭제 시 로컬 데이터를 잃을 수 있으므로 실명단 투입 전 보호된 백업과 실기 검증을 완성해야 합니다.
+
+## 이어하기
+
+[AGENTS](AGENTS.md), [META_PROMPT](META_PROMPT.md), [STATUS](docs/STATUS.md), [UI·UX](docs/UI_UX.md), [구조](docs/ARCHITECTURE.md), [로드맵](docs/ROADMAP.md)을 읽고 현재 Git/CI부터 확인합니다. [API](docs/API.md), [선택 버전 근거](docs/SOURCES.md), [이번 계획](docs/IMPLEMENTATION_PLAN.md)을 유지합니다.
