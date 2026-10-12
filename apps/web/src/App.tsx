@@ -9,7 +9,7 @@ type EventView = {
 };
 type Submission = {
   id: string; name: string; rsvp: Rsvp; noticeAcknowledged: boolean;
-  selectedOptions: string[]; version: number; updatedAt: string; verification: 'pending' | 'linked';
+  selectedOptions: string[]; version: number; eventVersion: number; updatedAt: string; verification: 'pending' | 'linked';
 };
 type PaymentRequest = { id: string; amount: number; depositorName: string; depositedAt: string; status: 'pending' | 'confirmed' | 'rejected'; createdAt: string };
 type Context = {
@@ -80,9 +80,12 @@ function App() {
       setContext(next);
       if (!preserveDraft) setDraft(next.submission ? {
         name: next.submission.name, rsvp: next.submission.rsvp,
-        noticeAcknowledged: next.submission.noticeAcknowledged,
+        noticeAcknowledged: (next.submission.eventVersion === next.event.version || !next.access.scopes.includes('notice')) && next.submission.noticeAcknowledged,
         selectedOptions: next.submission.selectedOptions,
       } : { ...initialDraft });
+      else if (next.submission && next.submission.eventVersion !== next.event.version && next.access.scopes.includes('notice') && !responsePayload.current) {
+        setDraft((previous) => ({ ...previous, noticeAcknowledged: false }));
+      }
       setError('');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '연결할 수 없어요. 다시 시도해 주세요.');
@@ -135,7 +138,7 @@ function App() {
     if (saving || (!context && !responsePayload.current)) return;
     if (!responsePayload.current) {
       if (!context) return;
-      const invalid = responseError(draft, context.event.pollOptions.map((option) => option.id), context.submission?.selectedOptions);
+      const invalid = responseError(draft, context.event.pollOptions.map((option) => option.id), context.submission?.selectedOptions, !!context.submission && context.submission.eventVersion !== context.event.version && context.access.scopes.includes('notice'));
       if (invalid) { setError(invalid); setStep('edit'); return; }
       responseOperation.current = nextOperation(responseOperation.current, false);
       responsePayload.current = {
@@ -209,6 +212,7 @@ function App() {
   const event = context?.event;
   const access = context?.access;
   const open = access?.state === 'open';
+  const staleResponse = !!context?.submission && context.submission.eventVersion !== event?.version;
   const canRespond = access?.scopes.some((scope) => scope === 'rsvp' || scope === 'notice' || scope === 'vote') ?? false;
   const pollOpen = open && (!event?.pollDeadline || new Date(event.pollDeadline).getTime() > Date.now());
   const canEditResponse = access?.scopes.includes('rsvp') || access?.scopes.includes('notice') || (access?.scopes.includes('vote') && (!!event?.pollOptions.length || !!context?.submission?.selectedOptions.length) && pollOpen);
@@ -238,6 +242,7 @@ function App() {
         {event.capacity !== null && <div><span>정원</span><strong>{event.capacity}명</strong></div>}
       </section>
       {event.notice && <section className="card"><h2>안내사항</h2><p className="preline">{event.notice}</p></section>}
+      {staleResponse && <div className="alert" role="status">ℹ 행사 안내가 변경됐어요. 이전 안내에 대한 응답이므로 최신 내용을 확인하고 다시 제출해 주세요.</div>}
       {access && !open && <div className="alert" role="status">ℹ {access.message || stateLabels[access.state]} {access.state === 'closed' && context?.submission ? '저장된 응답은 아래에서 확인할 수 있어요.' : ''}</div>}
       {open && access?.scopes.includes('vote') && !pollOpen && <div className="alert" role="status">ℹ 일정 투표가 마감됐어요. 저장된 선택은 확인할 수 있어요.</div>}
       {step === 'detail' && <>
@@ -253,7 +258,7 @@ function App() {
           {access?.scopes.includes('rsvp') && <fieldset><legend>참석 여부</legend>{(['attending', 'declined', 'undecided'] as const).map((value) => <label className="choice" key={value}><input type="radio" name="rsvp" checked={draft.rsvp === value} onChange={() => changeDraft({ ...draft, rsvp: value })} />{rsvpLabels[value]}</label>)}</fieldset>}
           {access?.scopes.includes('notice') && <label className="choice"><input type="checkbox" checked={draft.noticeAcknowledged} onChange={(e) => changeDraft({ ...draft, noticeAcknowledged: e.target.checked })} />안내사항을 확인했어요</label>}
           {access?.scopes.includes('vote') && (event.pollOptions.length > 0 || draft.selectedOptions.length > 0) && <fieldset disabled={!pollOpen}><legend>가능한 일정 (복수 선택)</legend>{event.pollOptions.map((option) => <label className="choice" key={option.id}><input type="checkbox" checked={draft.selectedOptions.includes(option.id)} onChange={(e) => changeDraft({ ...draft, selectedOptions: e.target.checked ? [...draft.selectedOptions, option.id] : draft.selectedOptions.filter((id) => id !== option.id) })} />{option.label}</label>)}{draft.selectedOptions.filter((id) => !event.pollOptions.some((option) => option.id === id)).map((id) => <label className="choice" key={id}><input type="checkbox" checked onChange={() => changeDraft({ ...draft, selectedOptions: draft.selectedOptions.filter((choice) => choice !== id) })} />삭제된 이전 후보</label>)}{!pollOpen && <p className="muted">투표가 종료되어 기존 선택을 유지해요.</p>}</fieldset>}
-          <button type="button" onClick={() => { const invalid = responseError(draft, event.pollOptions.map((option) => option.id), context?.submission?.selectedOptions); invalid ? setError(invalid) : (setError(''), setStep('review')); }}>입력 내용 확인</button>
+          <button type="button" onClick={() => { const invalid = responseError(draft, event.pollOptions.map((option) => option.id), context?.submission?.selectedOptions, staleResponse && !!access?.scopes.includes('notice')); invalid ? setError(invalid) : (setError(''), setStep('review')); }}>입력 내용 확인</button>
         </section> : <section className="card"><h2>제출할 내용</h2><p>이름: {draft.name}</p>{access?.scopes.includes('rsvp') && <p>참석: {rsvpLabels[draft.rsvp]}</p>}{access?.scopes.includes('notice') && <p>안내: {draft.noticeAcknowledged ? '확인함' : '확인하지 않음'}</p>}{access?.scopes.includes('vote') && (event.pollOptions.length > 0 || draft.selectedOptions.length > 0) && <p>가능 일정: {optionLabels(draft.selectedOptions)}</p>}<p className="muted">{access?.kind === 'common' ? '운영자가 확인할 때까지 미확인 응답으로 저장돼요.' : '제출 후 저장 결과를 확인해 주세요.'}</p><div className="actions"><button type="button" disabled={saving} onClick={() => void submitResponse()}>{saving ? '저장 중…' : '응답 제출'}</button><button type="button" className="secondary" disabled={saving} onClick={() => setStep('edit')}>수정</button></div></section>}
       </>}
       {step === 'done' && success && 'rsvp' in success && <section className="card" role="status"><h2>응답을 저장했어요</h2>{access?.scopes.includes('rsvp') && <p>{rsvpLabels[success.rsvp]}</p>}{access?.scopes.includes('notice') && <p>{success.noticeAcknowledged ? '안내 확인함' : '안내 미확인'}</p>}{access?.scopes.includes('vote') && (event.pollOptions.length > 0 || success.selectedOptions.length > 0) && <p>선택한 일정: {optionLabels(success.selectedOptions)}</p>}<p>{success.verification === 'pending' ? '운영자 확인 대기' : '회원 연결됨'}</p><p className="muted">저장 시각 {displayDate(success.updatedAt)}</p>{access?.scopes.includes('vote') && event.pollDeadline && <p className="muted">투표 수정 기한 {displayDate(event.pollDeadline)}</p>}{open && <p className="muted">마감 전 이 주소로 다시 열어 수정할 수 있어요. 링크를 다른 사람에게 보내지 마세요.</p>}{open && canEditResponse && <button type="button" onClick={() => setStep('edit')}>응답 수정</button>}</section>}

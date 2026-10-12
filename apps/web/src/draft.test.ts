@@ -21,6 +21,12 @@ test('deleted poll choice remains valid only when it was already saved', () => {
   assert.equal(responseError({ ...draft, selectedOptions: ['current'] }, ['current'], ['removed']), null);
 });
 
+test('new event guidance requires a fresh explicit acknowledgement', () => {
+  const draft = { name: '가상 회원', rsvp: 'attending' as const, noticeAcknowledged: false, selectedOptions: [] };
+  assert.match(responseError(draft, [], [], true) ?? '', /변경된 안내사항/);
+  assert.equal(responseError({ ...draft, noticeAcknowledged: true }, [], [], true), null);
+});
+
 test('uncertain transport and server failures retain the original operation', () => {
   assert.equal(keepOperation(undefined), true);
   assert.equal(keepOperation(500), true);

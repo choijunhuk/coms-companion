@@ -36,8 +36,8 @@ React/TS/Vite 모바일 응답 웹과 Fastify/TS/SQLite 단일 서버. 상세→
 | 웹·서버 타입 검사 | PASS | Node24.21.0, npm run typecheck |
 | 웹·서버 빌드 | PASS | Vite 프로덕션 번들, 서버 tsc |
 | 서버 테스트 | PASS 13 | 인증/GET/권한/중복/충돌/정원/마감/입금 주장/재시작/인코딩 경로/마감 후 회수/회원 연결 유지/삭제 후보/개인 영수증 보호 |
-| 웹 로직 테스트 | PASS 6 | 작업 ID·불확실 재시도·입력·삭제 후보 유지·세션 저장 |
-| Android 순수 Kotlin | PASS 7 | 실제 규칙/게시 본문+테스트 엔터티 stub. 전체 빌드는 CI 결과 참조 |
+| 웹 로직 테스트 | PASS 7 | 작업 ID·불확실 재시도·입력·삭제 후보·세션·이전 안내 응답 구분 |
+| Android 순수 Kotlin | PASS 9 | 실제 규칙/API/저장 성공·실패·취소 seam+테스트 엔터티 stub. 전체 빌드는 CI 결과 참조 |
 | manifest/XML | PASS | 파싱, SMS 권한 없음, allowBackup=false |
 | 로컬 Gradle | 환경 차단 | DatagramSocket.bind EPERM, 설정 읽기 전 실패 |
 | GitHub APK/Android CI | APK/단위 PASS, lint 재검증 | 1cf15b1, run38236802325에서 Compose/Room 컴파일·단위 테스트·APK 생성 성공; 설정 Flow lint 오류4건 수정 후 새 CI 필요 |
@@ -55,6 +55,10 @@ React/TS/Vite 모바일 응답 웹과 Fastify/TS/SQLite 단일 서버. 상세→
 run38239240792의 Chrome에서 공통 응답 저장/수정 토큰 발급까지 확인 후 같은 탭 개인 링크 전환에 실패했다. hashchange 시 이전 화면 상태가 남던 원인을 수정했다. 기존 스모크 경로로 재검증한다. 캡처는 가상 데이터만 사용하며 제한된 로컬 환경의 시각 확인을 위해 CI 로그에도 인코딩본을 남긴다.
 
 112f269 / run38239716519의 실제 Chrome 응답·입금 요청·응답 유실 후 hard reload/재시도는 PASS. 캡처에 한글 글꼴이 없어 사각형으로 표시되어 CI 시스템 글꼴을 보완해 재캡처한다. e730b0b Android 단위/lint/APK PASS(오류0, 경고8: 최신 SDK/도구·의존성 안내7, 앱 아이콘1); 기존 호환 조합 유지, 앱 아이콘/SDK37 업그레이드는 후속 작업이다.
+
+e60bdd7 / run38240259254는 Android·웹·서버·Chrome 전체 PASS. 한글 글꼴을 설치한 390px 실제 화면3개를 직접 검토했고 명세의 여백/색/버튼/입금 확인 대기 표현을 확인했다. 아직 에뮬레이터·실기 확인은 아니다.
+
+마지막 저장 복구 보완: Android 입력창은 DAO 성공을 기다린 뒤 닫고 실패 시 입력과 오류를 남긴다. CSV는 현재 명단 재검사 후 단일 Room 트랜잭션으로 적용한다. 이전 행사 안내에 대한 웹 응답에는 재확인 안내를 보여 주며 기존 참석/투표를 지우지 않는다. 최신 코드의 CI 확인 후 최종 결과를 갱신한다.
 
 ## 남은 조건과 다음 작업
 

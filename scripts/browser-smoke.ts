@@ -174,6 +174,13 @@ try {
   assert.equal(snapshot.submissions[0].verification, 'pending');
   assert.equal(snapshot.submissions[0].memberId, null);
 
+  await admin('POST', '/api/admin/events', { operationId: randomUUID(), expectedVersion: 1, event: { ...event, version: 1, notice: '최신 예시 안내를 다시 확인해 주세요.' } });
+  await session.send('Page.reload');
+  await visible(session, '행사 안내가 변경됐어요');
+  await click(session, '응답 수정');
+  assert.equal(await evaluate(session, `document.querySelector('input[type=checkbox]')?.checked`), false, 'changed guidance requires a fresh explicit acknowledgement');
+  await screenshot(session, 'member-changed-event.png');
+
   await navigate(session, base, personal);
   await click(session, '입금 확인 요청');
   await fill(session, '금액 (원)', '5000');

@@ -45,6 +45,7 @@ import com.kakao.sdk.template.model.TextTemplate
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -128,28 +129,42 @@ private val dark = darkColorScheme(
             },
         ) { inset ->
             Box(Modifier.padding(inset).fillMaxSize()) {
-                if (settings) SettingsScreen(theme, semester, serverUrl, adminToken, onlineStateExists, onTheme = { scope.launch { context.settings.edit { preferences -> preferences[themeKey] = it } } }, onSemester = { scope.launch { context.settings.edit { preferences -> preferences[semesterKey] = it } } }, onConnection = { url, token -> scope.launch {
+                if (settings) SettingsScreen(theme, semester, serverUrl, adminToken, onlineStateExists, onTheme = { context.settings.edit { preferences -> preferences[themeKey] = it } }, onSemester = { context.settings.edit { preferences -> preferences[semesterKey] = it } }, onConnection = { url, token ->
                     val storedUrl = context.settings.data.first()[serverUrlKey] ?: ""
-                    if (dao.onlineStateCount() > 0 && url != storedUrl) message = "게시·초대 기록이 있어 서버 주소를 변경할 수 없어요. 운영자 토큰은 교체할 수 있어요"
-                    else { context.settings.edit { preferences -> preferences[serverUrlKey] = url; preferences[adminTokenKey] = token }; message = "온라인 연결 설정을 이 기기에 저장했어요" }
-                } })
+                    require(dao.onlineStateCount() == 0 || url == storedUrl) { "게시·초대 기록이 있어 서버 주소를 변경할 수 없어요. 운영자 토큰은 교체할 수 있어요" }
+                    context.settings.edit { preferences -> preferences[serverUrlKey] = url; preferences[adminTokenKey] = token }
+                    message = "온라인 연결 설정을 이 기기에 저장했어요"
+                })
                 else when (tab) {
-                    0 -> HomeScreen(members, events, charges, ledger, duties, onTab = { tab = it }, onAddDuty = { scope.launch { dao.put(it); message = "할 일을 저장했어요" } }, onDutyDone = { scope.launch { dao.updateDuty(it.id, !it.done) } })
-                    1 -> MembersScreen(members, onSave = { member -> scope.launch {
-                        val duplicate = members.any { it.id != member.id && normalizePhone(it.phone).isNotEmpty() && normalizePhone(it.phone) == normalizePhone(member.phone) }
-                        if (members.any { it.id == member.id }) dao.updateMember(member.id, member.name, member.phone, member.cohort, member.groupName, member.status, member.optedOut) else dao.put(member)
+                    0 -> HomeScreen(members, events, charges, ledger, duties, onTab = { tab = it }, onAddDuty = { dao.put(it); message = "할 일을 저장했어요" }, onDutyDone = { scope.launch { try { dao.updateDuty(it.id, !it.done) } catch (e: CancellationException) { throw e } catch (e: Exception) { message = "할 일 변경 실패 · ${e.message}" } } })
+                    1 -> MembersScreen(members, onSave = { member ->
+                        val currentMembers = dao.memberSnapshot()
+                        val duplicate = currentMembers.any { it.id != member.id && normalizePhone(it.phone).isNotEmpty() && normalizePhone(it.phone) == normalizePhone(member.phone) }
+                        if (currentMembers.any { it.id == member.id }) dao.updateMember(member.id, member.name, member.phone, member.cohort, member.groupName, member.status, member.optedOut) else dao.put(member)
                         message = if (duplicate) "저장했어요. 같은 번호의 회원이 있어요. 자동 병합하지 않았어요" else "회원 정보를 저장했어요"
-                    } })
-                    2 -> EventsScreen(events, members, rsvps, duties, invites, onlineReady = serverUrl.isNotBlank() && adminToken.isNotBlank(), onSave = { event -> scope.launch {
+                    }, onImport = { rows ->
+                        val currentMembers = dao.memberSnapshot()
+                        val keys = currentMembers.map { normalizePhone(it.phone) }.filter(String::isNotBlank).toMutableSet()
+                        val valid = rows.filter { it.issue == null }
+                        require(valid.isNotEmpty()) { "가져올 정상 행이 없어요" }
+                        valid.forEach { row ->
+                            require(row.name.isNotBlank() && (row.phone.isBlank() || validPhone(row.phone))) { "${row.row}행 내용을 다시 확인해 주세요" }
+                            val phone = normalizePhone(row.phone)
+                            require(phone.isBlank() || keys.add(phone)) { "${row.row}행 번호가 현재 명단 또는 파일에서 중복됐어요. 미리보기를 다시 열어 주세요" }
+                        }
+                        dao.importMembers(valid.map { Member(name = it.name, phone = it.phone, cohort = it.cohort, groupName = it.group) })
+                        message = "회원 ${valid.size}명을 저장했어요"
+                    })
+                    2 -> EventsScreen(events, members, rsvps, duties, invites, onlineReady = serverUrl.isNotBlank() && adminToken.isNotBlank(), onSave = { event ->
                         if (events.any { it.id == event.id }) dao.updateEvent(event.id, event.title, event.whenText, event.place, event.details, event.deadline, event.capacity, event.feeWon, event.cancelled) else dao.put(event)
                         message = "행사를 저장했어요"
-                    } }, onRsvp = { rsvp -> scope.launch {
+                    }, onRsvp = { rsvp ->
                         val eventState = dao.eventById(rsvp.eventId)
-                        if ((eventState?.serverVersion ?: 0) > 0 || eventState?.pendingOperationId?.isNotBlank() == true || eventState?.cancelled == true) { message = "취소·게시 중이거나 게시된 행사 응답은 수정할 수 없어요"; return@launch }
+                        require((eventState?.serverVersion ?: 0) == 0 && eventState?.pendingOperationId?.isBlank() == true && eventState?.cancelled == false) { "취소·게시 중이거나 게시된 행사 응답은 수정할 수 없어요" }
                         val prior = rsvps.firstOrNull { it.eventId == rsvp.eventId && it.memberId == rsvp.memberId }
                         if (prior == null) dao.put(rsvp) else dao.updateRsvp(prior.id, rsvp.response, rsvp.attendance)
                         message = "운영자 수동 응답을 저장했어요"
-                    } }, onPublish = { event -> scope.launch {
+                    }, onPublish = { event -> scope.launch {
                         try {
                             val current = dao.eventById(event.id) ?: error("행사를 찾지 못했어요")
                             require(dao.rsvpCount(event.id) == 0) { "수동 참석 응답이 있어요. 최초 게시 이관이 구현될 때까지 이 행사는 게시할 수 없어요" }
@@ -169,7 +184,7 @@ private val dark = darkColorScheme(
                                 dao.clearPublishPending(event.id)
                                 message = "서버가 게시 요청을 거부했어요 · ${e.message}. 입력을 고친 뒤 다시 게시해 주세요"
                             } else message = "게시 결과 미확인 · ${e.message}. 같은 작업으로 재시도해 주세요"
-                        } catch (e: Exception) { message = "게시 결과 미확인 · ${e.message ?: "연결을 확인하고 같은 작업으로 재시도해 주세요"}" }
+                        } catch (e: CancellationException) { throw e } catch (e: Exception) { message = "게시 결과 미확인 · ${e.message ?: "연결을 확인하고 같은 작업으로 재시도해 주세요"}" }
                     } }, onLink = { event, member -> scope.launch {
                         try {
                             val current = dao.eventById(event.id) ?: error("행사를 찾지 못했어요")
@@ -188,16 +203,16 @@ private val dark = darkColorScheme(
                                 dao.setInviteUrl(invite.id, prepared)
                             }
                             message = "링크가 준비됐어요. 개인 링크는 해당 회원에게만 전달해 주세요"
-                        } catch (e: Exception) { message = "링크 실패 · ${e.message ?: "연결을 확인하고 다시 시도해 주세요"}" }
+                        } catch (e: CancellationException) { throw e } catch (e: Exception) { message = "링크 실패 · ${e.message ?: "연결을 확인하고 다시 시도해 주세요"}" }
                     } }, onRefresh = { event -> scope.launch {
                         try {
                             val json = RemoteApi(checkedBaseUrl(serverUrl, BuildConfig.DEBUG), adminToken).responses(event.id)
                             dao.setResponses(event.id, json, System.currentTimeMillis())
                             message = "서버 응답을 가져왔어요. 납부는 별도 확인이 필요해요"
-                        } catch (e: Exception) { message = "응답 가져오기 실패 · ${e.message ?: "연결을 확인하고 다시 시도해 주세요"}" }
+                        } catch (e: CancellationException) { throw e } catch (e: Exception) { message = "응답 가져오기 실패 · ${e.message ?: "연결을 확인하고 다시 시도해 주세요"}" }
                     } })
-                    3 -> FeesScreen(charges, members, ledger, onCharge = { scope.launch { dao.put(it); message = "회비 항목을 저장했어요" } }, onEntry = { scope.launch { dao.put(it); message = "원장 기록을 저장했어요" } })
-                    4 -> ContactScreen(members, events, charges, ledger, templates, contacts, reminders, drafts, dao, onTemplate = { template -> scope.launch { if (templates.any { it.id == template.id }) dao.updateTemplate(template.id, template.title, template.body) else dao.put(template); message = "템플릿을 저장했어요" } }, onMessage = { message = it })
+                    3 -> FeesScreen(charges, members, ledger, onCharge = { dao.put(it); message = "회비 항목을 저장했어요" }, onEntry = { dao.put(it); message = "원장 기록을 저장했어요" })
+                    4 -> ContactScreen(members, events, charges, ledger, templates, contacts, reminders, drafts, dao, onTemplate = { template -> if (templates.any { it.id == template.id }) dao.updateTemplate(template.id, template.title, template.body) else dao.put(template); message = "템플릿을 저장했어요" }, onMessage = { message = it })
                 }
             }
         }
@@ -227,7 +242,7 @@ private val dark = darkColorScheme(
     Button(onClick, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text(label) }
 }
 
-@Composable private fun HomeScreen(members: List<Member>, events: List<Event>, charges: List<Charge>, ledger: List<LedgerEntry>, duties: List<Duty>, onTab: (Int) -> Unit, onAddDuty: (Duty) -> Unit, onDutyDone: (Duty) -> Unit) {
+@Composable private fun HomeScreen(members: List<Member>, events: List<Event>, charges: List<Charge>, ledger: List<LedgerEntry>, duties: List<Duty>, onTab: (Int) -> Unit, onAddDuty: suspend (Duty) -> Unit, onDutyDone: (Duty) -> Unit) {
     var addDuty by remember { mutableStateOf(false) }
     Page {
         Section("오늘 처리할 일")
@@ -249,15 +264,18 @@ private val dark = darkColorScheme(
         Action("할 일 추가", { addDuty = true })
         duties.forEach { duty -> CardLine(if (duty.done) "✓ ${duty.title}" else "○ ${duty.title}", if (duty.done) "완료" else "미완료", onClick = { onDutyDone(duty) }) }
     }
-    if (addDuty) DutyDialog(onDismiss = { addDuty = false }, onSave = { onAddDuty(it); addDuty = false })
+    if (addDuty) DutyDialog(onDismiss = { addDuty = false }, onSave = onAddDuty)
 }
 
-@Composable private fun DutyDialog(onDismiss: () -> Unit, onSave: (Duty) -> Unit) {
+@Composable private fun DutyDialog(onDismiss: () -> Unit, onSave: suspend (Duty) -> Unit) {
+    val scope = rememberCoroutineScope()
     var title by remember { mutableStateOf("") }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("할 일 추가") }, text = { OutlinedTextField(title, { title = it }, label = { Text("할 일") }) }, confirmButton = { TextButton(onClick = { onSave(Duty(title = title.trim())) }, enabled = title.isNotBlank()) { Text("저장") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } })
+    var saving by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf("") }
+    AlertDialog(onDismissRequest = { if (!saving) onDismiss() }, title = { Text("할 일 추가") }, text = { Column { OutlinedTextField(title, { title = it }, label = { Text("할 일") }); if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error) } }, confirmButton = { TextButton(onClick = { if (!saving) { saving = true; scope.launch { try { commitSave({ onSave(Duty(title = title.trim())) }, onDismiss, { error = it }) } finally { saving = false } } } }, enabled = title.isNotBlank() && !saving) { Text("저장") } }, dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text("취소") } })
 }
 
-@Composable private fun MembersScreen(members: List<Member>, onSave: (Member) -> Unit) {
+@Composable private fun MembersScreen(members: List<Member>, onSave: suspend (Member) -> Unit, onImport: suspend (List<ImportRow>) -> Unit) {
     val context = LocalContext.current
     var query by remember { mutableStateOf("") }
     var status by remember { mutableStateOf("전체") }
@@ -267,6 +285,8 @@ private val dark = darkColorScheme(
     var adding by remember { mutableStateOf(false) }
     var imported by remember { mutableStateOf<List<ImportRow>?>(null) }
     var importError by remember { mutableStateOf("") }
+    var importing by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     val csvPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) runCatching {
             val bytes = ByteArrayOutputStream()
@@ -302,23 +322,25 @@ private val dark = darkColorScheme(
         if (importError.isNotBlank()) Text("⚠ $importError", color = MaterialTheme.colorScheme.error)
         if (found.isEmpty()) Hint("조건에 맞는 회원이 없어요") else found.forEach { member -> CardLine(member.name, "${member.cohort.ifBlank { "기수 미입력" }} · ${member.groupName.ifBlank { "소모임 미입력" }} · ${member.status}", onClick = { editing = member }) }
     }
-    if (adding || editing != null) MemberDialog(editing, members, onDismiss = { adding = false; editing = null }, onSave = { onSave(it); adding = false; editing = null })
+    if (adding || editing != null) MemberDialog(editing, members, onDismiss = { adding = false; editing = null }, onSave = onSave)
     if (imported != null) {
         val rows = imported!!
-        AlertDialog(onDismissRequest = { imported = null }, title = { Text("명단 가져오기 미리보기") }, text = {
+        AlertDialog(onDismissRequest = { if (!importing) imported = null }, title = { Text("명단 가져오기 미리보기") }, text = {
             Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Hint("열 이름: 이름, 전화번호, 기수, 소모임. 정상 ${rows.count { it.issue == null }}건 · 오류·중복 ${rows.count { it.issue != null }}건")
                 rows.take(30).forEach { row -> Text("${row.row}행 · ${row.name.ifBlank { "이름 없음" }} · ${row.issue ?: "가져오기 가능"}", fontSize = 14.sp) }
                 if (rows.size > 30) Hint("나머지 ${rows.size - 30}행은 적용 시 같은 규칙으로 처리해요")
+                if (importError.isNotBlank()) Text(importError, color = MaterialTheme.colorScheme.error)
             }
         }, confirmButton = { TextButton(onClick = {
-            rows.filter { it.issue == null }.forEach { row -> onSave(Member(name = row.name, phone = row.phone, cohort = row.cohort, groupName = row.group)) }
-            imported = null
-        }, enabled = rows.any { it.issue == null }) { Text("정상 행만 추가") } }, dismissButton = { TextButton(onClick = { imported = null }) { Text("취소") } })
+            if (!importing) { importing = true; scope.launch { try { commitSave({ onImport(rows) }, { imported = null; importError = "" }, { importError = it }) } finally { importing = false } } }
+        }, enabled = rows.any { it.issue == null } && !importing) { Text("정상 행만 추가") } }, dismissButton = { TextButton(onClick = { imported = null }, enabled = !importing) { Text("취소") } })
     }
 }
 
-@Composable private fun MemberDialog(existing: Member?, members: List<Member>, onDismiss: () -> Unit, onSave: (Member) -> Unit) {
+@Composable private fun MemberDialog(existing: Member?, members: List<Member>, onDismiss: () -> Unit, onSave: suspend (Member) -> Unit) {
+    val scope = rememberCoroutineScope()
+    var saving by remember { mutableStateOf(false) }
     var name by remember(existing) { mutableStateOf(existing?.name ?: "") }
     var phone by remember(existing) { mutableStateOf(existing?.phone ?: "") }
     var cohort by remember(existing) { mutableStateOf(existing?.cohort ?: "") }
@@ -327,7 +349,7 @@ private val dark = darkColorScheme(
     var optOut by remember(existing) { mutableStateOf(existing?.optedOut ?: false) }
     var error by remember { mutableStateOf("") }
     val duplicate = members.firstOrNull { it.id != existing?.id && phone.isNotBlank() && normalizePhone(it.phone) == normalizePhone(phone) }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text(if (existing == null) "회원 추가" else "회원 수정") }, text = {
+    AlertDialog(onDismissRequest = { if (!saving) onDismiss() }, title = { Text(if (existing == null) "회원 추가" else "회원 수정") }, text = {
         Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(name, { name = it }, label = { Text("이름 *") }, singleLine = true)
             OutlinedTextField(phone, { phone = it }, label = { Text("전화번호") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone), singleLine = true)
@@ -340,12 +362,17 @@ private val dark = darkColorScheme(
         }
     }, confirmButton = { TextButton(onClick = {
         error = when { name.isBlank() -> "이름을 입력해 주세요"; phone.isNotBlank() && !validPhone(phone) -> "휴대전화번호를 확인해 주세요"; else -> "" }
-        if (error.isEmpty()) onSave(Member(id = existing?.id ?: newId(), name = name.trim(), phone = phone.trim(), cohort = cohort.trim(), groupName = group.trim(), status = status, optedOut = optOut))
-    }) { Text("저장") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } })
+        if (error.isEmpty() && !saving) {
+            saving = true
+            val member = Member(id = existing?.id ?: newId(), name = name.trim(), phone = phone.trim(), cohort = cohort.trim(), groupName = group.trim(), status = status, optedOut = optOut)
+            scope.launch { try { commitSave({ onSave(member) }, onDismiss, { error = it }) } finally { saving = false } }
+        }
+    }, enabled = !saving) { Text("저장") } }, dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text("취소") } })
 }
 
-@Composable private fun EventsScreen(events: List<Event>, members: List<Member>, rsvps: List<Rsvp>, duties: List<Duty>, invites: List<Invite>, onlineReady: Boolean, onSave: (Event) -> Unit, onRsvp: (Rsvp) -> Unit, onPublish: (Event) -> Unit, onLink: (Event, Member?) -> Unit, onRefresh: (Event) -> Unit) {
+@Composable private fun EventsScreen(events: List<Event>, members: List<Member>, rsvps: List<Rsvp>, duties: List<Duty>, invites: List<Invite>, onlineReady: Boolean, onSave: suspend (Event) -> Unit, onRsvp: suspend (Rsvp) -> Unit, onPublish: (Event) -> Unit, onLink: (Event, Member?) -> Unit, onRefresh: (Event) -> Unit) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var editing by remember { mutableStateOf<Event?>(null) }
     var adding by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf<Event?>(null) }
@@ -408,23 +435,28 @@ private val dark = darkColorScheme(
             duties.filter { it.eventId == event.id }.forEach { CardLine(it.title, if (it.done) "완료" else "미완료") }
         }
     }
-    if (adding || editing != null) EventDialog(editing, onDismiss = { adding = false; editing = null }, onSave = { onSave(it); selected = it; adding = false; editing = null })
+    if (adding || editing != null) EventDialog(editing, onDismiss = { adding = false; editing = null }, onSave = { onSave(it); selected = it })
     if (rsvpMember != null && selected != null) {
         val member = rsvpMember!!
         val event = selected!!
         val prior = rsvps.firstOrNull { it.eventId == event.id && it.memberId == member.id }
         var response by remember(member.id, event.id) { mutableStateOf(prior?.response ?: "미정") }
         var attendance by remember(member.id, event.id) { mutableStateOf(prior?.attendance ?: false) }
-        AlertDialog(onDismissRequest = { rsvpMember = null }, title = { Text("${member.name} · 수동 응답") }, text = {
+        var saving by remember(member.id, event.id) { mutableStateOf(false) }
+        var saveError by remember(member.id, event.id) { mutableStateOf("") }
+        AlertDialog(onDismissRequest = { if (!saving) rsvpMember = null }, title = { Text("${member.name} · 수동 응답") }, text = {
             Column {
                 listOf("참석", "불참", "미정").forEach { Row(verticalAlignment = Alignment.CenterVertically) { RadioButton(selected = response == it, onClick = { response = it }); Text(it) } }
                 Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(attendance, { attendance = it }); Text("현장 출석 확인") }
+                if (saveError.isNotBlank()) Text(saveError, color = MaterialTheme.colorScheme.error)
             }
-        }, confirmButton = { TextButton(onClick = { onRsvp(Rsvp(eventId = event.id, memberId = member.id, response = response, attendance = attendance)); rsvpMember = null }) { Text("저장") } }, dismissButton = { TextButton(onClick = { rsvpMember = null }) { Text("취소") } })
+        }, confirmButton = { TextButton(onClick = { if (!saving) { saving = true; val value = Rsvp(eventId = event.id, memberId = member.id, response = response, attendance = attendance); scope.launch { try { commitSave({ onRsvp(value) }, { rsvpMember = null }, { saveError = it }) } finally { saving = false } } } }, enabled = !saving) { Text("저장") } }, dismissButton = { TextButton(onClick = { rsvpMember = null }, enabled = !saving) { Text("취소") } })
     }
 }
 
-@Composable private fun EventDialog(existing: Event?, onDismiss: () -> Unit, onSave: (Event) -> Unit) {
+@Composable private fun EventDialog(existing: Event?, onDismiss: () -> Unit, onSave: suspend (Event) -> Unit) {
+    val scope = rememberCoroutineScope()
+    var saving by remember { mutableStateOf(false) }
     var title by remember(existing) { mutableStateOf(existing?.title ?: "") }
     var whenText by remember(existing) { mutableStateOf(existing?.whenText ?: "") }
     var place by remember(existing) { mutableStateOf(existing?.place ?: "") }
@@ -434,7 +466,7 @@ private val dark = darkColorScheme(
     var fee by remember(existing) { mutableStateOf(existing?.feeWon?.takeIf { it > 0 }?.toString() ?: "") }
     var cancelled by remember(existing) { mutableStateOf(existing?.cancelled ?: false) }
     var error by remember { mutableStateOf("") }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text(if (existing == null) "행사 만들기" else "행사 수정") }, text = {
+    AlertDialog(onDismissRequest = { if (!saving) onDismiss() }, title = { Text(if (existing == null) "행사 만들기" else "행사 수정") }, text = {
         Column(Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(title, { title = it }, label = { Text("행사명 *") })
             OutlinedTextField(whenText, { whenText = it }, label = { Text("일시 · 미정 가능") })
@@ -448,16 +480,23 @@ private val dark = darkColorScheme(
         }
     }, confirmButton = { TextButton(onClick = {
         error = when { title.isBlank() -> "행사명을 입력해 주세요"; capacity.isNotBlank() && (capacity.toIntOrNull() ?: 0) <= 0 -> "정원은 양수로 입력해 주세요"; fee.isNotBlank() && (fee.toLongOrNull() ?: -1) < 0 -> "참가비를 확인해 주세요"; else -> "" }
-        if (error.isEmpty()) onSave((existing ?: Event(title = title.trim())).copy(title = title.trim(), whenText = whenText.trim(), place = place.trim(), details = details.trim(), deadline = deadline.trim(), capacity = capacity.toIntOrNull(), feeWon = fee.toLongOrNull() ?: 0, cancelled = cancelled))
-    }) { Text("저장") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } })
+        if (error.isEmpty() && !saving) {
+            saving = true
+            val event = (existing ?: Event(title = title.trim())).copy(title = title.trim(), whenText = whenText.trim(), place = place.trim(), details = details.trim(), deadline = deadline.trim(), capacity = capacity.toIntOrNull(), feeWon = fee.toLongOrNull() ?: 0, cancelled = cancelled)
+            scope.launch { try { commitSave({ onSave(event) }, onDismiss, { error = it }) } finally { saving = false } }
+        }
+    }, enabled = !saving) { Text("저장") } }, dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text("취소") } })
 }
 
-@Composable private fun FeesScreen(charges: List<Charge>, members: List<Member>, ledger: List<LedgerEntry>, onCharge: (Charge) -> Unit, onEntry: (LedgerEntry) -> Unit) {
+@Composable private fun FeesScreen(charges: List<Charge>, members: List<Member>, ledger: List<LedgerEntry>, onCharge: suspend (Charge) -> Unit, onEntry: suspend (LedgerEntry) -> Unit) {
+    val scope = rememberCoroutineScope()
     var addCharge by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf<Charge?>(null) }
     var addEntry by remember { mutableStateOf(false) }
+    var chargeSaving by remember { mutableStateOf(false) }
+    var chargeError by remember { mutableStateOf("") }
     Page {
-        Action("회비 항목 추가", { addCharge = true })
+        Action("회비 항목 추가", { chargeError = ""; addCharge = true })
         if (charges.isEmpty()) Hint("회비 항목이 없어요")
         charges.forEach { charge ->
             val entries = ledger.filter { it.chargeId == charge.id }
@@ -484,18 +523,20 @@ private val dark = darkColorScheme(
     if (addCharge) {
         var title by remember { mutableStateOf("") }
         var due by remember { mutableStateOf("") }
-        AlertDialog(onDismissRequest = { addCharge = false }, title = { Text("회비 항목 추가") }, text = { Column { OutlinedTextField(title, { title = it }, label = { Text("항목명 *") }); OutlinedTextField(due, { due = it }, label = { Text("기한 · 선택") }) } }, confirmButton = { TextButton(onClick = { onCharge(Charge(title = title.trim(), dueDate = due.trim())); addCharge = false }, enabled = title.isNotBlank()) { Text("저장") } }, dismissButton = { TextButton(onClick = { addCharge = false }) { Text("취소") } })
+        AlertDialog(onDismissRequest = { if (!chargeSaving) addCharge = false }, title = { Text("회비 항목 추가") }, text = { Column { OutlinedTextField(title, { title = it }, label = { Text("항목명 *") }); OutlinedTextField(due, { due = it }, label = { Text("기한 · 선택") }); if (chargeError.isNotBlank()) Text(chargeError, color = MaterialTheme.colorScheme.error) } }, confirmButton = { TextButton(onClick = { if (!chargeSaving) { chargeSaving = true; val charge = Charge(title = title.trim(), dueDate = due.trim()); scope.launch { try { commitSave({ onCharge(charge) }, { addCharge = false }, { chargeError = it }) } finally { chargeSaving = false } } } }, enabled = title.isNotBlank() && !chargeSaving) { Text("저장") } }, dismissButton = { TextButton(onClick = { addCharge = false }, enabled = !chargeSaving) { Text("취소") } })
     }
-    if (addEntry && selected != null) LedgerDialog(selected!!, members, ledger, onDismiss = { addEntry = false }, onSave = { onEntry(it); addEntry = false })
+    if (addEntry && selected != null) LedgerDialog(selected!!, members, ledger, onDismiss = { addEntry = false }, onSave = onEntry)
 }
 
-@Composable private fun LedgerDialog(charge: Charge, members: List<Member>, ledger: List<LedgerEntry>, onDismiss: () -> Unit, onSave: (LedgerEntry) -> Unit) {
+@Composable private fun LedgerDialog(charge: Charge, members: List<Member>, ledger: List<LedgerEntry>, onDismiss: () -> Unit, onSave: suspend (LedgerEntry) -> Unit) {
+    val scope = rememberCoroutineScope()
+    var saving by remember { mutableStateOf(false) }
     var memberId by remember { mutableStateOf(members.firstOrNull()?.id ?: "") }
     var kind by remember { mutableStateOf("청구") }
     var amount by remember { mutableStateOf("") }
     var reason by remember { mutableStateOf("") }
     var error by remember { mutableStateOf("") }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("${charge.title} · 원장 기록") }, text = {
+    AlertDialog(onDismissRequest = { if (!saving) onDismiss() }, title = { Text("${charge.title} · 원장 기록") }, text = {
         Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Hint("회원 선택")
             Column(Modifier.heightIn(max = 120.dp).verticalScroll(rememberScrollState())) { members.forEach { member -> Row(verticalAlignment = Alignment.CenterVertically) { RadioButton(memberId == member.id, { memberId = member.id }); Text(member.name) } } }
@@ -507,6 +548,7 @@ private val dark = darkColorScheme(
             if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)
         }
     }, confirmButton = { TextButton(onClick = {
+        if (saving) return@TextButton
         try {
             require(memberId.isNotBlank()) { "먼저 회원을 등록해 주세요" }
             val delta = requireLedgerEntry(kind, amount.toLongOrNull() ?: 0, reason.trim())
@@ -514,9 +556,11 @@ private val dark = darkColorScheme(
             require(kind !in listOf("납부 확인", "면제") || -delta <= current) { "현재 남은 금액보다 클 수 없어요. 정정 기록으로 차이를 남겨 주세요" }
             val previous = ledger.filter { it.chargeId == charge.id && it.memberId == memberId }
             require(kind != "환불" || delta <= -previous.filter { it.kind == "납부 확인" }.sumOf { it.deltaWon } - previous.filter { it.kind == "환불" }.sumOf { it.deltaWon }) { "확인 납부액보다 환불액이 클 수 없어요" }
-            onSave(LedgerEntry(chargeId = charge.id, memberId = memberId, kind = kind, deltaWon = delta, reason = reason.trim()))
+            val entry = LedgerEntry(chargeId = charge.id, memberId = memberId, kind = kind, deltaWon = delta, reason = reason.trim())
+            saving = true
+            scope.launch { try { commitSave({ onSave(entry) }, onDismiss, { error = it }) } finally { saving = false } }
         } catch (e: IllegalArgumentException) { error = e.message ?: "입력을 확인해 주세요" }
-    }) { Text("원장에 기록") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } })
+    }, enabled = !saving) { Text("원장에 기록") } }, dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text("취소") } })
 }
 
 private val builtInTemplates = listOf(
@@ -538,7 +582,7 @@ private val builtInTemplates = listOf(
     MessageTemplate(id = "preparation-friendly", title = "준비물 안내 · 친근", body = "{이름}님, {행사명} 준비물 확인해 주세요!"),
 )
 
-@Composable private fun ContactScreen(members: List<Member>, events: List<Event>, charges: List<Charge>, ledger: List<LedgerEntry>, templates: List<MessageTemplate>, contacts: List<ContactRecord>, reminders: List<Reminder>, drafts: List<ContactDraft>, dao: AppDao, onTemplate: (MessageTemplate) -> Unit, onMessage: (String) -> Unit) {
+@Composable private fun ContactScreen(members: List<Member>, events: List<Event>, charges: List<Charge>, ledger: List<LedgerEntry>, templates: List<MessageTemplate>, contacts: List<ContactRecord>, reminders: List<Reminder>, drafts: List<ContactDraft>, dao: AppDao, onTemplate: suspend (MessageTemplate) -> Unit, onMessage: (String) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var section by remember { mutableStateOf("준비 중") }
@@ -558,6 +602,8 @@ private val builtInTemplates = listOf(
     var smsBusy by remember { mutableStateOf(false) }
     var kakaoFallback by remember { mutableStateOf<String?>(null) }
     var kakaoError by remember { mutableStateOf("") }
+    var draftSaving by remember { mutableStateOf(false) }
+    var draftError by remember { mutableStateOf("") }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> if (!granted) onMessage("알림 권한이 없어도 앱의 연락 알림 목록에서 확인할 수 있어요") }
     val candidates = eligibleMembers(members, ledger, selectedCharge?.id, selectedGroup)
     val shownIndex = currentIndex.coerceAtMost((candidates.size - 1).coerceAtLeast(0))
@@ -583,7 +629,7 @@ private val builtInTemplates = listOf(
                 if (contacts.isEmpty()) Hint("연락 기록이 없어요")
                 contacts.forEach { record ->
                     CardLine("${record.memberName} · ${record.channel}", "${record.state} · ${record.bodySnapshot.take(70)}")
-                    if (record.state == "앱 전달됨") TextButton(onClick = { scope.launch { dao.updateContact(record.id, "사용자 발송 확인") } }) { Text("발송했다고 표시") }
+                    if (record.state == "앱 전달됨") TextButton(onClick = { scope.launch { try { dao.updateContact(record.id, "사용자 발송 확인") } catch (e: CancellationException) { throw e } catch (e: Exception) { onMessage("연락 상태 저장 실패 · ${e.message}") } } }) { Text("발송했다고 표시") }
                 }
             }
             "템플릿" -> {
@@ -607,9 +653,13 @@ private val builtInTemplates = listOf(
                 }
                 OutlinedTextField(draftTitle, { draftTitle = it }, label = { Text("초안 제목") }, modifier = Modifier.fillMaxWidth())
                 OutlinedButton(onClick = {
-                    val draft = ContactDraft(id = activeDraft?.id ?: newId(), title = draftTitle.trim(), body = body, eventId = selectedEvent?.id, chargeId = selectedCharge?.id, groupName = selectedGroup, currentIndex = currentIndex)
-                    scope.launch { if (activeDraft == null) dao.put(draft) else dao.updateDraft(draft.id, draft.title, draft.body, draft.eventId, draft.chargeId, draft.groupName, draft.currentIndex); activeDraft = draft; onMessage("초안을 이 기기에 저장했어요") }
-                }, enabled = draftTitle.isNotBlank() && body.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("초안 저장") }
+                    if (draftSaving) return@OutlinedButton
+                    draftSaving = true
+                    val existingDraft = activeDraft
+                    val draft = ContactDraft(id = existingDraft?.id ?: newId(), title = draftTitle.trim(), body = body, eventId = selectedEvent?.id, chargeId = selectedCharge?.id, groupName = selectedGroup, currentIndex = currentIndex)
+                    scope.launch { try { commitSave({ if (existingDraft == null) dao.put(draft) else dao.updateDraft(draft.id, draft.title, draft.body, draft.eventId, draft.chargeId, draft.groupName, draft.currentIndex) }, { activeDraft = draft; draftError = ""; onMessage("초안을 이 기기에 저장했어요") }, { draftError = it }) } finally { draftSaving = false } }
+                }, enabled = draftTitle.isNotBlank() && body.isNotBlank() && !draftSaving, modifier = Modifier.fillMaxWidth()) { Text("초안 저장") }
+                if (draftError.isNotBlank()) Text(draftError, color = MaterialTheme.colorScheme.error)
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     FilterChip(selectedCharge == null, { selectedCharge = null; currentIndex = 0 }, label = { Text("전체") })
                     charges.forEach { charge -> FilterChip(selectedCharge?.id == charge.id, { selectedCharge = charge; currentIndex = 0 }, label = { Text(charge.title, maxLines = 1, overflow = TextOverflow.Ellipsis) }) }
@@ -669,6 +719,7 @@ private val builtInTemplates = listOf(
                                 allowRepeat = false
                                 onMessage("문자 앱을 열었어요. 실제 전송 여부는 확인되지 않았어요")
                             } catch (_: ActivityNotFoundException) { onMessage("문자 앱을 찾지 못했어요. 내용을 복사해 사용해 주세요") }
+                            catch (e: CancellationException) { throw e }
                             catch (e: Exception) { onMessage(if (handedOff) "문자 앱은 열렸지만 연락 기록 저장에 실패했어요. 재시도 전 실제 발송 여부를 확인해 주세요" else "문자 준비 오류 · ${e.message ?: "다시 시도해 주세요"}") }
                             finally { smsBusy = false }
                         }
@@ -691,7 +742,7 @@ private val builtInTemplates = listOf(
                                 context.startActivity(result.intent)
                                 scope.launch {
                                     try { dao.put(ContactRecord(memberId = "", memberName = "공통 공지", phoneSnapshot = "", bodySnapshot = snapshot, channel = "카카오톡 공유", state = "앱 전달됨")) }
-                                    catch (_: Exception) { onMessage("카카오톡 화면은 열렸지만 연락 기록 저장에 실패했어요") }
+                                    catch (e: CancellationException) { throw e } catch (_: Exception) { onMessage("카카오톡 화면은 열렸지만 연락 기록 저장에 실패했어요") }
                                 }
                                 onMessage("카카오톡 공유 화면을 열었어요. 실제 전송 여부는 확인되지 않았어요")
                             } catch (e: ActivityNotFoundException) { kakaoError = e.message ?: "카카오톡 공유 화면을 열지 못했어요"; kakaoFallback = snapshot }
@@ -702,11 +753,12 @@ private val builtInTemplates = listOf(
             }
         }
     }
-    if (editTemplate != null || newTemplate) TemplateDialog(editTemplate, onDismiss = { editTemplate = null; newTemplate = false }, onSave = { onTemplate(it); editTemplate = null; newTemplate = false })
+    if (editTemplate != null || newTemplate) TemplateDialog(editTemplate, onDismiss = { editTemplate = null; newTemplate = false }, onSave = onTemplate)
     if (newReminder) ReminderDialog(onDismiss = { newReminder = false }, onSave = { reminder ->
-        scope.launch { dao.put(reminder); scheduleReminder(context, reminder); onMessage("연락 알림을 저장했어요. 실제 발송은 하지 않아요") }
+        dao.put(reminder)
+        scheduleReminder(context, reminder)
         if (Build.VERSION.SDK_INT >= 33) permission.launch(Manifest.permission.POST_NOTIFICATIONS)
-        newReminder = false
+        onMessage("연락 알림을 저장했어요. 실제 발송은 하지 않아요")
     })
     if (kakaoFallback != null) {
         val snapshot = kakaoFallback!!
@@ -714,11 +766,14 @@ private val builtInTemplates = listOf(
     }
 }
 
-@Composable private fun ReminderDialog(onDismiss: () -> Unit, onSave: (Reminder) -> Unit) {
+@Composable private fun ReminderDialog(onDismiss: () -> Unit, onSave: suspend (Reminder) -> Unit) {
+    val scope = rememberCoroutineScope()
+    val reminderId = remember { newId() }
+    var saving by remember { mutableStateOf(false) }
     var title by remember { mutableStateOf("") }
     var whenText by remember { mutableStateOf("") }
     var error by remember { mutableStateOf("") }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("연락 알림") }, text = {
+    AlertDialog(onDismissRequest = { if (!saving) onDismiss() }, title = { Text("연락 알림") }, text = {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(title, { title = it }, label = { Text("내부 제목") })
             OutlinedTextField(whenText, { whenText = it }, label = { Text("시간 YYYY-MM-DD HH:mm") })
@@ -729,8 +784,12 @@ private val builtInTemplates = listOf(
         val parser = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.KOREA).apply { isLenient = false }
         val time = runCatching { parser.parse(whenText)?.time }.getOrNull()
         error = when { title.isBlank() -> "제목을 입력해 주세요"; time == null || time <= System.currentTimeMillis() -> "미래 시간을 정확히 입력해 주세요"; else -> "" }
-        if (error.isEmpty()) onSave(Reminder(title = title.trim(), atMillis = time!!))
-    }) { Text("알림 저장") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } })
+        if (error.isEmpty() && !saving) {
+            saving = true
+            val reminder = Reminder(id = reminderId, title = title.trim(), atMillis = time!!)
+            scope.launch { try { commitSave({ onSave(reminder) }, onDismiss, { error = it }) } finally { saving = false } }
+        }
+    }, enabled = !saving) { Text("알림 저장") } }, dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text("취소") } })
 }
 
 private fun copyText(context: Context, text: String) {
@@ -743,27 +802,34 @@ private fun shareCommonWithAndroid(context: Context, text: String, dao: AppDao, 
         context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text), "공통 공지 공유"))
         scope.launch {
             try { dao.put(ContactRecord(memberId = "", memberName = "공통 공지", phoneSnapshot = "", bodySnapshot = text, channel = "일반 공유", state = "앱 전달됨")) }
-            catch (_: Exception) { onMessage("공유 화면은 열렸지만 연락 기록 저장에 실패했어요") }
+            catch (e: CancellationException) { throw e } catch (_: Exception) { onMessage("공유 화면은 열렸지만 연락 기록 저장에 실패했어요") }
         }
         onMessage("공유 화면을 열었어요. 실제 전송 여부는 확인되지 않았어요")
     } catch (_: ActivityNotFoundException) { onMessage("공유 앱이 없어요. 내용을 복사해 사용해 주세요") }
 }
 
-@Composable private fun TemplateDialog(existing: MessageTemplate?, onDismiss: () -> Unit, onSave: (MessageTemplate) -> Unit) {
+@Composable private fun TemplateDialog(existing: MessageTemplate?, onDismiss: () -> Unit, onSave: suspend (MessageTemplate) -> Unit) {
+    val scope = rememberCoroutineScope()
+    var saving by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf("") }
     var title by remember(existing) { mutableStateOf(existing?.title ?: "") }
     var body by remember(existing) { mutableStateOf(existing?.body ?: "") }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text(if (existing == null) "내 템플릿 추가" else "템플릿 수정") }, text = {
+    AlertDialog(onDismissRequest = { if (!saving) onDismiss() }, title = { Text(if (existing == null) "내 템플릿 추가" else "템플릿 수정") }, text = {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(title, { title = it }, label = { Text("제목") })
             OutlinedTextField(body, { body = it }, label = { Text("본문") }, minLines = 4)
             Hint("지원 변수: {이름}, {행사명}, {일시}, {장소}, {납부항목}, {남은금액}, {마감}")
+            if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)
         }
-    }, confirmButton = { TextButton(onClick = { onSave(MessageTemplate(id = existing?.id ?: newId(), title = title.trim(), body = body.trim())) }, enabled = title.isNotBlank() && body.isNotBlank()) { Text("저장") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } })
+    }, confirmButton = { TextButton(onClick = { if (!saving) { saving = true; val template = MessageTemplate(id = existing?.id ?: newId(), title = title.trim(), body = body.trim()); scope.launch { try { commitSave({ onSave(template) }, onDismiss, { error = it }) } finally { saving = false } } } }, enabled = title.isNotBlank() && body.isNotBlank() && !saving) { Text("저장") } }, dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text("취소") } })
 }
 
-@Composable private fun SettingsScreen(theme: String, semester: String, serverUrl: String, adminToken: String, onlineStateExists: Boolean, onTheme: (String) -> Unit, onSemester: (String) -> Unit, onConnection: (String, String) -> Unit) {
+@Composable private fun SettingsScreen(theme: String, semester: String, serverUrl: String, adminToken: String, onlineStateExists: Boolean, onTheme: suspend (String) -> Unit, onSemester: suspend (String) -> Unit, onConnection: suspend (String, String) -> Unit) {
+    val scope = rememberCoroutineScope()
     var editingSemester by remember { mutableStateOf(false) }
     var editingConnection by remember { mutableStateOf(false) }
+    var settingsError by remember { mutableStateOf("") }
+    var themeSaving by remember { mutableStateOf(false) }
     Page {
         Section("동아리 정보")
         Hint("COM’s · 운영 데이터는 이 기기의 비공개 저장소에 보관돼요")
@@ -772,7 +838,8 @@ private fun shareCommonWithAndroid(context: Context, text: String, dao: AppDao, 
         Section("서식·템플릿")
         Hint("연락 탭의 템플릿에서 개인 문구를 추가·수정할 수 있어요")
         Section("화면 설정")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("밝게", "어둡게", "시스템").forEach { FilterChip(theme == it, { onTheme(it) }, label = { Text(it) }) } }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("밝게", "어둡게", "시스템").forEach { choice -> FilterChip(theme == choice, { if (!themeSaving) { themeSaving = true; scope.launch { try { commitSave({ onTheme(choice) }, { settingsError = "" }, { settingsError = it }) } finally { themeSaving = false } } } }, label = { Text(choice) }, enabled = !themeSaving) } }
+        if (settingsError.isNotBlank()) Text(settingsError, color = MaterialTheme.colorScheme.error)
         Section("문자·카카오 연결")
         Hint("문자 앱 작성 화면은 직접 전송합니다. 통신사 요금제 적용. 카카오 개발자 키가 연결되기 전에는 Android 일반 공유를 사용합니다")
         Section("온라인 응답 연결")
@@ -794,13 +861,16 @@ private fun shareCommonWithAndroid(context: Context, text: String, dao: AppDao, 
     }
     if (editingSemester) {
         var value by remember { mutableStateOf(semester) }
-        AlertDialog(onDismissRequest = { editingSemester = false }, title = { Text("학기") }, text = { OutlinedTextField(value, { value = it }, label = { Text("현재 학기") }) }, confirmButton = { TextButton(onClick = { onSemester(value.trim()); editingSemester = false }, enabled = value.isNotBlank()) { Text("저장") } }, dismissButton = { TextButton(onClick = { editingSemester = false }) { Text("취소") } })
+        var saving by remember { mutableStateOf(false) }
+        var error by remember { mutableStateOf("") }
+        AlertDialog(onDismissRequest = { if (!saving) editingSemester = false }, title = { Text("학기") }, text = { Column { OutlinedTextField(value, { value = it }, label = { Text("현재 학기") }); if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error) } }, confirmButton = { TextButton(onClick = { if (!saving) { saving = true; scope.launch { try { commitSave({ onSemester(value.trim()) }, { editingSemester = false }, { error = it }) } finally { saving = false } } } }, enabled = value.isNotBlank() && !saving) { Text("저장") } }, dismissButton = { TextButton(onClick = { editingSemester = false }, enabled = !saving) { Text("취소") } })
     }
     if (editingConnection) {
         var url by remember { mutableStateOf(serverUrl) }
         var token by remember { mutableStateOf(adminToken) }
         var error by remember { mutableStateOf("") }
-        AlertDialog(onDismissRequest = { editingConnection = false }, title = { Text("온라인 응답 연결") }, text = {
+        var saving by remember { mutableStateOf(false) }
+        AlertDialog(onDismissRequest = { if (!saving) editingConnection = false }, title = { Text("온라인 응답 연결") }, text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(url, { url = it }, label = { Text("서버 기본 주소") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(token, { token = it }, label = { Text("운영자 토큰") }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
@@ -812,8 +882,8 @@ private fun shareCommonWithAndroid(context: Context, text: String, dao: AppDao, 
                 val checked = if (url.isBlank() && token.isBlank()) "" else checkedBaseUrl(url, BuildConfig.DEBUG)
                 require(checked.isBlank() || token.isNotBlank()) { "운영자 토큰을 입력해 주세요" }
                 require(!onlineStateExists || checked == serverUrl) { "기존 게시·초대 기록이 있어 서버 주소를 변경할 수 없어요" }
-                onConnection(checked, token.trim()); editingConnection = false
+                if (!saving) { saving = true; scope.launch { try { commitSave({ onConnection(checked, token.trim()) }, { editingConnection = false }, { error = it }) } finally { saving = false } } }
             } catch (e: Exception) { error = e.message ?: "연결 정보를 확인해 주세요" }
-        }) { Text("저장") } }, dismissButton = { TextButton(onClick = { editingConnection = false }) { Text("취소") } })
+        }, enabled = !saving) { Text("저장") } }, dismissButton = { TextButton(onClick = { editingConnection = false }, enabled = !saving) { Text("취소") } })
     }
 }

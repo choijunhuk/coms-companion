@@ -31,9 +31,10 @@ export function readPending(storage: Pick<Storage, 'getItem'>, key: string): Pen
   } catch { return null; }
 }
 
-export function responseError(draft: Draft, validOptions: string[], savedOptions: string[] = []): string | null {
+export function responseError(draft: Draft, validOptions: string[], savedOptions: string[] = [], requireNoticeAcknowledgement = false): string | null {
   if (!draft.name.trim()) return '이름을 입력해 주세요.';
   if (draft.name.trim().length > 100) return '이름은 100자 이내로 입력해 주세요.';
+  if (requireNoticeAcknowledgement && !draft.noticeAcknowledged) return '변경된 안내사항을 확인해 주세요.';
   const unchanged = [...draft.selectedOptions].sort().join('\0') === [...savedOptions].sort().join('\0');
   if (!unchanged && draft.selectedOptions.some((id) => !validOptions.includes(id))) return '선택한 날짜를 다시 확인해 주세요.';
   return null;

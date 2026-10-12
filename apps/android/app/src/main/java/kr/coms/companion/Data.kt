@@ -5,6 +5,8 @@ import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
 import androidx.room.Insert
+import androidx.room.Upsert
+import androidx.room.Transaction
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Room
@@ -143,6 +145,8 @@ fun newId(): String = UUID.randomUUID().toString()
     @Query("SELECT * FROM Reminder ORDER BY atMillis") fun reminders(): Flow<List<Reminder>>
     @Query("SELECT * FROM ContactDraft ORDER BY updatedAt DESC") fun drafts(): Flow<List<ContactDraft>>
     @Insert suspend fun put(member: Member)
+    @Insert suspend fun putMembers(members: List<Member>)
+    @Transaction suspend fun importMembers(members: List<Member>) { putMembers(members) }
     @Insert suspend fun put(event: Event)
     @Insert suspend fun put(invite: Invite)
     @Insert suspend fun put(rsvp: Rsvp)
@@ -151,7 +155,7 @@ fun newId(): String = UUID.randomUUID().toString()
     @Insert suspend fun put(duty: Duty)
     @Insert suspend fun put(template: MessageTemplate)
     @Insert suspend fun put(record: ContactRecord)
-    @Insert suspend fun put(reminder: Reminder)
+    @Upsert suspend fun put(reminder: Reminder)
     @Insert suspend fun put(draft: ContactDraft)
     @Query("UPDATE Member SET name=:name, phone=:phone, cohort=:cohort, groupName=:groupName, status=:status, optedOut=:optedOut WHERE id=:id")
     suspend fun updateMember(id: String, name: String, phone: String, cohort: String, groupName: String, status: String, optedOut: Boolean)
