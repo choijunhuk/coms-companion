@@ -28,6 +28,6 @@ GitHub의 새 저장소 화면에서 이름을 coms-companion, 공개 범위를 
 - 원격 URL, 기본 브랜치, 게시된 커밋과 현재 구현 상태를 STATUS.md에 기록합니다.
 - 다음 세션은 같은 저장소를 열고 AGENTS.md, META_PROMPT.md, STATUS.md부터 읽습니다.
 - 공개 소스 저장소와 회원 데이터 저장 공간을 구분합니다.
-- 앱 서명키는 별도 안전한 장소에 보관하고, 검증된 APK는 GitHub Releases 등 선택한 배포 경로에서 제공할 수 있습니다. 현재 이 문서 묶음에는 APK가 없습니다.
+- 앱 서명키는 별도 안전한 장소에 보관하고, 검증된 APK는 GitHub Releases 등 선택한 배포 경로에서 제공할 수 있습니다. 첫 디버그 APK는 CI 아티팩트로 확인할 수 있습니다. 실기 승인·안정된 릴리스 서명은 별개이며 현재 STATUS.md를 확인합니다.
 
 공식 명령 참고: [GitHub CLI — gh repo create](https://cli.github.com/manual/gh_repo_create)

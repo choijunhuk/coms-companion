@@ -40,9 +40,10 @@ React/TS/Vite 모바일 응답 웹과 Fastify/TS/SQLite 단일 서버. 상세→
 | Android 순수 Kotlin | PASS 9 | 실제 규칙/API/저장 성공·실패·취소 seam+테스트 엔터티 stub. 전체 빌드는 CI 결과 참조 |
 | manifest/XML | PASS | 파싱, SMS 권한 없음, allowBackup=false |
 | 로컬 Gradle | 환경 차단 | DatagramSocket.bind EPERM, 설정 읽기 전 실패 |
-| GitHub APK/Android CI | APK/단위 PASS, lint 재검증 | 1cf15b1, run38236802325에서 Compose/Room 컴파일·단위 테스트·APK 생성 성공; 설정 Flow lint 오류4건 수정 후 새 CI 필요 |
+| GitHub Android 전체 검사 | PASS | 최종 소스4036488 / run38244016754: 단위 테스트, Room/KSP/Compose 컴파일, lint, debug APK. 오류0/경고8 |
 | 로컬 통합 서버 포트 | 환경 차단 | Node24 listen 127.0.0.1:3000 EPERM. inject는 성공 |
-| 브라우저/에뮬레이터 | NOT_RUN | 로컬 서버/ADB 포트 차단 |
+| 실제 Chrome 모바일 웹 | PASS | CI390px, 응답/투표/안내/개인 입금 주장, 링크 전환, 이전 안내 재확인, 응답 유실 후 hard reload/재시도 |
+| Android 에뮬레이터 | NOT_RUN | ADB 포트 생성 EPERM; Chrome CI와 구별 |
 | 실기/SKT 문자/Kakao 실제 공유 | NOT_RUN | 기종·회선·승인된 테스트 대상·실제 앱 등록 필요 |
 | 외부 응답/배포 | NOT_RUN | 호스트 미지정, 기존 운영 서버 변경 없음 |
 
@@ -58,11 +59,11 @@ run38239240792의 Chrome에서 공통 응답 저장/수정 토큰 발급까지 �
 
 e60bdd7 / run38240259254는 Android·웹·서버·Chrome 전체 PASS. 한글 글꼴을 설치한 390px 실제 화면3개를 직접 검토했고 명세의 여백/색/버튼/입금 확인 대기 표현을 확인했다. 아직 에뮬레이터·실기 확인은 아니다.
 
-마지막 저장 복구 보완: Android 입력창은 DAO 성공을 기다린 뒤 닫고 실패 시 입력과 오류를 남긴다. CSV는 현재 명단 재검사 후 단일 Room 트랜잭션으로 적용한다. 이전 행사 안내에 대한 웹 응답에는 재확인 안내를 보여 주며 기존 참석/투표를 지우지 않는다. 최신 코드의 CI 확인 후 최종 결과를 갱신한다.
+마지막 저장 복구 보완: Android 입력창은 DAO 성공을 기다린 뒤 닫고 실패 시 입력과 오류를 남긴다. CSV는 현재 명단 재검사 후 단일 Room 트랜잭션으로 적용한다. 이전 행사 안내에 대한 웹 응답에는 재확인 안내를 보여 주며 기존 참석/투표를 지우지 않는다. 최종 소스4036488에서 이 변경을 포함한 CI 전체 PASS를 확인했다.
 
 ## 남은 조건과 다음 작업
 
-1. GitHub CI의 전체 Android 컴파일/Room/KSP/lint/APK를 확인·수정하고 커밋/검증 갱신.
+1. 검증된 디버그 APK로 에뮬레이터/실기 수동 수용 검증. CI는 통과했으며 설치/실행을 대신하지 않는다.
 2. 에뮬레이터 저장/재시작/큰 글자/키보드/연속 누름/실패 복구. 실기 회선/장문/복귀/Kakao는 별도 확인.
 3. 보호된 백업/복구와 앱 잠금. OS 백업은 비활성, 앱 삭제 시 로컬 데이터 유실 가능. 실명단 투입 전 필요.
 4. P2 잔여: 수동 응답 최초 이관, 공통 신청 회원 연결/입금 검토 Android 화면, 원장과 요청 ID 연계, 대기함/변경 커서/충돌 검토/자동 동기화, Android 일정 투표 후보 편집. 수동 RSVP가 있는 행사 게시와 게시 후 로컬 응답 수정은 차단 중.
@@ -70,3 +71,16 @@ e60bdd7 / run38240259254는 Android·웹·서버·Chrome 전체 PASS. 한글 글
 6. P3 정산/물품 대여/모집/인수인계는 후속 개발.
 
 정확한 SKT 요금제·기종·OS·SIM, Kakao 키/키 해시/도메인, 배포 호스트는 미제공이다. 실제 회원에게 임의 발송하지 않았다.
+
+## 최종 인계 체크포인트
+
+- 검증된 소스 커밋: `4036488fd671356e78b8aa6232fffdbb73e6273d`.
+- [전체 성공 CI](https://github.com/choijunhuk/coms-companion/actions/runs/38244016754): Android와 web-server 두 job 모두 success.
+- [디버그 APK와 단위/lint 보고서](https://github.com/choijunhuk/coms-companion/actions/runs/38244016754/artifacts/11743943871): android-verification, 실제 ZIP20,047,946바이트, SHA256 `fa4cbd5860309849c88164e2c0faa8dc180cedc692d95ad267f2ddcd69927f35` (APK 단독 해시 아님).
+- [실제 Chrome 캡처4개](https://github.com/choijunhuk/coms-companion/actions/runs/38244016754/artifacts/11743543912): 가상 데이터, 한글 표시 확인, 변경 안내/응답 입력 화면까지 직접 시각 검토. 본문/주요 버튼 대비 최저5.47:1.
+- npm production audit 알려진 취약점0 (검사 시점 기준). 추적 파일60개 공개 검사 PASS. 실제 회원/전화/납부 데이터·DB·비밀값 없음.
+- 마지막 문서 커밋은 이 소스 검증을 기록한다. 문서만 바뀌면 CI를 반복하지 않으며 다음 세션은 실제 main HEAD와 위 검증 소스를 구별한다.
+
+추가 P1 잔여: 회원 상세/다중 선택, 탭 상태 유지와 미저장 이동 확인, 단계형 연락/행사 작성, 계좌 안내/응답 링크 변수와 조건 저장 등 UI 명세의 나머지 흐름. 현재 목록/양식 기반 핵심 업무가 동작하는 첫 버전이며 P1/P2 전체 완료나 실운영 승인으로 표현하지 않는다.
+
+CI APK는 개발용 디버그 서명이며 실행별 서명이 같다는 보장은 없다. 업그레이드 설치가 안 될 때 실제 데이터가 있는 앱을 지우지 말고 안정된 비공개 서명/백업 경로부터 마련해야 한다. 서명키는 공개 저장소에 게시하지 않는다.
