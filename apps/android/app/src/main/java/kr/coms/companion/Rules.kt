@@ -46,6 +46,7 @@ fun renderTemplate(body: String, member: Member, event: Event? = null, charge: C
 
 fun requireLedgerEntry(kind: String, amountWon: Long, reason: String): Long {
     require(amountWon > 0) { "금액은 0원보다 커야 해요" }
+    require(amountWon <= 1_000_000_000L) { "한 건의 금액은 10억 원 이하로 입력해 주세요" }
     require(reason.isNotBlank()) { "기록 이유를 입력해 주세요" }
     return when (kind) {
         "청구", "환불" -> amountWon

@@ -18,6 +18,7 @@ class RulesTest {
         assertTrue(eligibleMembers(listOf(a, b), entries, charge.id).isEmpty())
         assertEquals(10000, requireLedgerEntry("청구", 10000, "부과"))
         assertEquals(-10000, requireLedgerEntry("정정 감소", 10000, "오류 수정"))
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) { requireLedgerEntry("청구", 1_000_000_001L, "과다") }
     }
 
     @Test fun unresolvedVariablesStayVisibleAndBlockHandoff() {

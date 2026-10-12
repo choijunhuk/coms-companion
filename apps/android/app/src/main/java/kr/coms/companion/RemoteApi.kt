@@ -30,7 +30,7 @@ fun publishPayload(event: Event, operationId: String): JSONObject {
         .put("startsAt", time(event.whenText)).put("location", event.place)
         .put("feeAmount", event.feeWon).put("capacity", event.capacity ?: JSONObject.NULL)
         .put("deadline", time(event.deadline)).put("notice", event.details)
-        .put("cancelled", false).put("version", event.serverVersion)
+        .put("cancelled", event.cancelled).put("version", event.serverVersion)
         .put("pollOptions", JSONArray()).put("pollDeadline", JSONObject.NULL)
     return JSONObject().put("operationId", operationId).put("expectedVersion", event.serverVersion).put("event", eventView)
 }

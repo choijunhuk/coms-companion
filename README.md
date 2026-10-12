@@ -41,7 +41,7 @@ cp .env.example .env
 npm start
 ```
 
-기본 http://localhost:3000에서 웹 빌드와 API를 함께 제공합니다. 개발 API는 npm run dev, 웹은 npm run dev:web입니다. Vite 프록시 사용 시 허용 출처 설정을 맞춰야 하며 통합 확인은 단일 서버에서 합니다.
+기본 http://localhost:3000에서 웹 빌드와 API를 함께 제공합니다. 개발 API는 npm run dev, 웹은 npm run dev:web입니다. Vite 프록시는 기본 로컬 서버에 연결되며 통합 확인은 단일 서버에서 합니다.
 
 실제 HTTPS 호스트를 PUBLIC_BASE_URL과 Android에 동일하게 설정한 뒤에만 링크를 공유합니다. 디버그 에뮬레이터는 http://10.0.2.2:3000을 허용합니다. 공개 소스 게시에 기존 COM’s 서버 변경·공개 배포·실제 회원 발송은 포함되지 않습니다.
 

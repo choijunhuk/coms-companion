@@ -7,7 +7,7 @@ permissions:
   contents: read
 jobs:
   web-server:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -17,6 +17,14 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm run audit:public
+      - name: Real browser response and lost-save recovery
+        run: node scripts/browser-smoke.ts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: member-web-screenshots
+          path: artifacts/member-*.png
+          if-no-files-found: ignore
   android:
     runs-on: ubuntu-latest
     steps:
@@ -29,6 +37,13 @@ jobs:
       - name: Unit tests, lint and debug APK
         working-directory: apps/android
         run: ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug
+      - name: Lint findings for the next development session
+        if: always()
+        working-directory: apps/android
+        run: |
+          if [ -f app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt ]; then
+            cat app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -37,4 +52,5 @@ jobs:
             apps/android/app/build/outputs/apk/debug/*.apk
             apps/android/app/build/reports/tests/testDebugUnitTest/
             apps/android/app/build/reports/lint-results-debug.html
+            apps/android/app/build/reports/lint-results-debug.xml
           if-no-files-found: ignore

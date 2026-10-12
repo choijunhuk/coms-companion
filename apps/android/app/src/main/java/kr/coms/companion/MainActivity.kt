@@ -21,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -34,13 +35,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.kakao.sdk.common.KakaoSdk
 import com.kakao.sdk.share.ShareClient
 import com.kakao.sdk.template.model.Link
 import com.kakao.sdk.template.model.TextTemplate
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CoroutineScope
@@ -80,10 +81,11 @@ private val dark = darkColorScheme(
 @Composable private fun CompanionApp(dao: AppDao) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val theme by context.settings.data.map { it[themeKey] ?: "밝게" }.collectAsState("밝게")
-    val semester by context.settings.data.map { it[semesterKey] ?: "학기 미설정" }.collectAsState("학기 미설정")
-    val serverUrl by context.settings.data.map { it[serverUrlKey] ?: "" }.collectAsState("")
-    val adminToken by context.settings.data.map { it[adminTokenKey] ?: "" }.collectAsState("")
+    val preferences by remember(context) { context.settings.data }.collectAsState(emptyPreferences())
+    val theme = preferences[themeKey] ?: "밝게"
+    val semester = preferences[semesterKey] ?: "학기 미설정"
+    val serverUrl = preferences[serverUrlKey] ?: ""
+    val adminToken = preferences[adminTokenKey] ?: ""
     val isDark = theme == "어둡게" || theme == "시스템" && androidx.compose.foundation.isSystemInDarkTheme()
     val members by dao.members().collectAsState(emptyList())
     val events by dao.events().collectAsState(emptyList())
@@ -112,7 +114,7 @@ private val dark = darkColorScheme(
                         Text(if (settings) "설정" else if (tab == 0) "COM’s Companion" else listOf("홈", "회원", "행사", "회비", "연락")[tab], fontSize = 24.sp, fontWeight = FontWeight.Bold)
                         if (!settings && tab == 0) Text(semester, fontSize = 14.sp)
                     }
-                }, navigationIcon = { if (settings) IconButton(onClick = { settings = false }) { Icon(Icons.Default.ArrowBack, "뒤로") } }, actions = {
+                }, navigationIcon = { if (settings) IconButton(onClick = { settings = false }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "뒤로") } }, actions = {
                     if (!settings) IconButton(onClick = { settings = true }) { Icon(Icons.Default.Settings, "설정") }
                 })
             },
@@ -139,11 +141,11 @@ private val dark = darkColorScheme(
                         message = if (duplicate) "저장했어요. 같은 번호의 회원이 있어요. 자동 병합하지 않았어요" else "회원 정보를 저장했어요"
                     } })
                     2 -> EventsScreen(events, members, rsvps, duties, invites, onlineReady = serverUrl.isNotBlank() && adminToken.isNotBlank(), onSave = { event -> scope.launch {
-                        if (events.any { it.id == event.id }) dao.updateEvent(event.id, event.title, event.whenText, event.place, event.details, event.deadline, event.capacity, event.feeWon) else dao.put(event)
+                        if (events.any { it.id == event.id }) dao.updateEvent(event.id, event.title, event.whenText, event.place, event.details, event.deadline, event.capacity, event.feeWon, event.cancelled) else dao.put(event)
                         message = "행사를 저장했어요"
                     } }, onRsvp = { rsvp -> scope.launch {
                         val eventState = dao.eventById(rsvp.eventId)
-                        if ((eventState?.serverVersion ?: 0) > 0 || eventState?.pendingOperationId?.isNotBlank() == true) { message = "게시 중이거나 게시된 행사 응답은 서버에서 확인해야 해요. 수동 변경은 저장하지 않았어요"; return@launch }
+                        if ((eventState?.serverVersion ?: 0) > 0 || eventState?.pendingOperationId?.isNotBlank() == true || eventState?.cancelled == true) { message = "취소·게시 중이거나 게시된 행사 응답은 수정할 수 없어요"; return@launch }
                         val prior = rsvps.firstOrNull { it.eventId == rsvp.eventId && it.memberId == rsvp.memberId }
                         if (prior == null) dao.put(rsvp) else dao.updateRsvp(prior.id, rsvp.response, rsvp.attendance)
                         message = "운영자 수동 응답을 저장했어요"
@@ -172,6 +174,7 @@ private val dark = darkColorScheme(
                         try {
                             val current = dao.eventById(event.id) ?: error("행사를 찾지 못했어요")
                             require(current.serverVersion > 0 && !current.serverDirty && current.pendingOperationId.isBlank()) { "현재 행사 내용을 먼저 서버에 게시해 주세요" }
+                            require(!current.cancelled) { "취소한 행사에는 새 초대를 발급할 수 없어요" }
                             val memberId = member?.id ?: ""
                             val existingInvite = dao.inviteFor(event.id, memberId)
                             val validExisting = existingInvite?.takeIf { java.time.Instant.parse(it.expiresAt).isAfter(java.time.Instant.now()) }
@@ -238,7 +241,7 @@ private val dark = darkColorScheme(
         } else {
             Section("업무 현황")
             Hint("활동 회원 ${members.count { it.status == "활동" }}명 · 회비 항목 ${charges.size}개")
-            val upcoming = events.take(2)
+            val upcoming = events.filterNot(Event::cancelled).take(2)
             Section("다가오는 행사")
             if (upcoming.isEmpty()) Hint("등록된 행사가 없어요") else upcoming.forEach { CardLine(it.title, "${it.whenText.ifBlank { "일시 미정" }} · ${it.place.ifBlank { "장소 미정" }}", onClick = { onTab(2) }) }
         }
@@ -352,11 +355,12 @@ private val dark = darkColorScheme(
         if (events.isEmpty()) Hint("행사가 없어요. 일시와 장소는 미정으로 둘 수 있어요")
         events.forEach { event ->
             val eventRsvps = rsvps.filter { it.eventId == event.id }
-            CardLine(event.title, "${event.whenText.ifBlank { "일시 미정" }} · ${event.place.ifBlank { "장소 미정" }} · 응답 ${eventRsvps.size}명", onClick = { selected = event })
+            CardLine("${if (event.cancelled) "취소됨 · " else ""}${event.title}", "${event.whenText.ifBlank { "일시 미정" }} · ${event.place.ifBlank { "장소 미정" }} · 응답 ${eventRsvps.size}명", onClick = { selected = event })
         }
         if (selected != null) {
             val event = events.firstOrNull { it.id == selected?.id } ?: selected!!
             Section(event.title)
+            if (event.cancelled) Text("⚠ 취소된 행사입니다. 기존 응답은 보존하고 새 응답은 받지 않습니다", color = MaterialTheme.colorScheme.error)
             Hint("${event.whenText.ifBlank { "일시 미정" }} · ${event.place.ifBlank { "장소 미정" }}")
             if (event.details.isNotBlank()) Text(event.details)
             if (!onlineReady) Hint("응답 링크를 사용하려면 설정에서 HTTPS 서버와 운영자 토큰을 연결해 주세요")
@@ -380,7 +384,7 @@ private val dark = darkColorScheme(
                         val request = payments.optJSONObject(i) ?: continue
                         CardLine("입금 확인 요청 · ${request.optString("depositorName")}", "${request.optLong("amount")}원 주장 · ${request.optString("status")} · 운영자 실제 확인 전에는 납부 완료 아님")
                     }
-                    if (!event.serverDirty && event.pendingOperationId.isBlank()) {
+                    if (!event.cancelled && !event.serverDirty && event.pendingOperationId.isBlank()) {
                         Section("응답 링크")
                         val now = java.time.Instant.now()
                         val common = invites.firstOrNull { it.eventId == event.id && it.memberId.isBlank() && it.url.isNotBlank() && runCatching { java.time.Instant.parse(it.expiresAt).isAfter(now) }.getOrDefault(false) }
@@ -398,7 +402,7 @@ private val dark = darkColorScheme(
             Section(if (event.serverVersion == 0) "참여자 · 운영자 수동 응답" else "게시 전 수동 응답 · 게시 후에는 서버 응답을 확인해 주세요")
             members.filter { it.status != "탈퇴" }.forEach { member ->
                 val record = rsvps.firstOrNull { it.eventId == event.id && it.memberId == member.id }
-                CardLine(member.name, "${record?.response ?: "미응답"} · ${if (record?.attendance == true) "출석" else "출석 미확인"}", onClick = if (event.serverVersion == 0 && event.pendingOperationId.isBlank()) ({ rsvpMember = member }) else null)
+                CardLine(member.name, "${record?.response ?: "미응답"} · ${if (record?.attendance == true) "출석" else "출석 미확인"}", onClick = if (!event.cancelled && event.serverVersion == 0 && event.pendingOperationId.isBlank()) ({ rsvpMember = member }) else null)
             }
             Section("준비 할 일")
             duties.filter { it.eventId == event.id }.forEach { CardLine(it.title, if (it.done) "완료" else "미완료") }
@@ -428,6 +432,7 @@ private val dark = darkColorScheme(
     var deadline by remember(existing) { mutableStateOf(existing?.deadline ?: "") }
     var capacity by remember(existing) { mutableStateOf(existing?.capacity?.toString() ?: "") }
     var fee by remember(existing) { mutableStateOf(existing?.feeWon?.takeIf { it > 0 }?.toString() ?: "") }
+    var cancelled by remember(existing) { mutableStateOf(existing?.cancelled ?: false) }
     var error by remember { mutableStateOf("") }
     AlertDialog(onDismissRequest = onDismiss, title = { Text(if (existing == null) "행사 만들기" else "행사 수정") }, text = {
         Column(Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -438,11 +443,12 @@ private val dark = darkColorScheme(
             OutlinedTextField(capacity, { capacity = it }, label = { Text("정원") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
             OutlinedTextField(fee, { fee = it }, label = { Text("참가비 원") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
             OutlinedTextField(details, { details = it }, label = { Text("안내사항") }, minLines = 2)
+            Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(cancelled, { cancelled = it }); Text("행사 취소 · 기존 응답 보존") }
             if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)
         }
     }, confirmButton = { TextButton(onClick = {
         error = when { title.isBlank() -> "행사명을 입력해 주세요"; capacity.isNotBlank() && (capacity.toIntOrNull() ?: 0) <= 0 -> "정원은 양수로 입력해 주세요"; fee.isNotBlank() && (fee.toLongOrNull() ?: -1) < 0 -> "참가비를 확인해 주세요"; else -> "" }
-        if (error.isEmpty()) onSave((existing ?: Event(title = title.trim())).copy(title = title.trim(), whenText = whenText.trim(), place = place.trim(), details = details.trim(), deadline = deadline.trim(), capacity = capacity.toIntOrNull(), feeWon = fee.toLongOrNull() ?: 0))
+        if (error.isEmpty()) onSave((existing ?: Event(title = title.trim())).copy(title = title.trim(), whenText = whenText.trim(), place = place.trim(), details = details.trim(), deadline = deadline.trim(), capacity = capacity.toIntOrNull(), feeWon = fee.toLongOrNull() ?: 0, cancelled = cancelled))
     }) { Text("저장") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } })
 }
 

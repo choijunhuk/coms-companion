@@ -1,5 +1,5 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  server: { proxy: { '/api': 'http://127.0.0.1:3000' } },
+  server: { proxy: { '/api': { target: 'http://127.0.0.1:3000', headers: { Origin: 'http://localhost:3000' } } } },
 });

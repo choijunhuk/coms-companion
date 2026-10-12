@@ -33,6 +33,7 @@ fun newId(): String = UUID.randomUUID().toString()
     val deadline: String = "",
     val capacity: Int? = null,
     val feeWon: Long = 0,
+    val cancelled: Boolean = false,
     val serverVersion: Int = 0,
     val serverDirty: Boolean = true,
     val pendingOperationId: String = "",
@@ -154,8 +155,8 @@ fun newId(): String = UUID.randomUUID().toString()
     @Insert suspend fun put(draft: ContactDraft)
     @Query("UPDATE Member SET name=:name, phone=:phone, cohort=:cohort, groupName=:groupName, status=:status, optedOut=:optedOut WHERE id=:id")
     suspend fun updateMember(id: String, name: String, phone: String, cohort: String, groupName: String, status: String, optedOut: Boolean)
-    @Query("UPDATE Event SET title=:title, whenText=:whenText, place=:place, details=:details, deadline=:deadline, capacity=:capacity, feeWon=:feeWon, serverDirty=1 WHERE id=:id")
-    suspend fun updateEvent(id: String, title: String, whenText: String, place: String, details: String, deadline: String, capacity: Int?, feeWon: Long)
+    @Query("UPDATE Event SET title=:title, whenText=:whenText, place=:place, details=:details, deadline=:deadline, capacity=:capacity, feeWon=:feeWon, cancelled=:cancelled, serverDirty=1 WHERE id=:id")
+    suspend fun updateEvent(id: String, title: String, whenText: String, place: String, details: String, deadline: String, capacity: Int?, feeWon: Long, cancelled: Boolean)
     @Query("UPDATE Event SET pendingOperationId=:operationId, pendingPayload=:payload WHERE id=:id")
     suspend fun markPublishPending(id: String, operationId: String, payload: String)
     @Query("UPDATE Event SET pendingOperationId='', pendingPayload='' WHERE id=:id")

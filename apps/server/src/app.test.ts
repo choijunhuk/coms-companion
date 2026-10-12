@@ -140,3 +140,53 @@ test('SQLite restart preserves saved responses and encrypted operation receipts'
   assert.deepEqual((await restarted.inject({method:'POST',url:'/api/respond',headers:bearer(link.token),payload})).json(),first.json());
   assert.equal((await restarted.inject({url:'/api/respond',headers:bearer(first.json().editToken)})).json().submission.version,1);
 });
+
+test('expired or revoked tokens cannot recover private receipts or payment data',async t=>{
+  let clock=new Date('2026-10-12T12:00:00Z');
+  const {app,e}=await setup({now:()=>clock});t.after(()=>app.close());const link=await invite(app,e);const payload=answer(e);
+  assert.equal((await app.inject({method:'POST',url:'/api/respond',headers:bearer(link.token),payload})).statusCode,200);
+  clock=new Date('2031-01-01T00:00:00Z');
+  const expired=await app.inject({url:'/api/respond',headers:bearer(link.token)});
+  assert.equal(expired.json().access.state,'expired');assert.equal(expired.json().submission,null);assert.deepEqual(expired.json().paymentRequests,[]);
+  assert.equal((await app.inject({method:'POST',url:'/api/respond',headers:bearer(link.token),payload})).statusCode,410);
+  clock=new Date('2026-10-12T12:00:00Z');
+  await app.inject({method:'POST',url:`/api/admin/links/${link.linkId}/revoke`,headers:auth,payload:{operationId:randomUUID()}});
+  assert.equal((await app.inject({method:'POST',url:'/api/respond',headers:bearer(link.token),payload})).statusCode,403);
+});
+
+test('payment-only links cannot change responses and operation receipts are bound to identity',async t=>{
+  const {app,e}=await setup();t.after(()=>app.close());
+  const limited=await invite(app,e,'personal',randomUUID(),['payment']);
+  const context=(await app.inject({url:'/api/respond',headers:bearer(limited.token)})).json();
+  assert.deepEqual(context.access.scopes,['payment']);assert.equal(context.access.canPay,true);
+  assert.equal((await app.inject({method:'POST',url:'/api/respond',headers:bearer(limited.token),payload:answer(e)})).statusCode,403);
+  const first=await invite(app,e),second=await invite(app,e),payload=answer(e);
+  assert.equal((await app.inject({method:'POST',url:'/api/respond',headers:bearer(first.token),payload})).statusCode,200);
+  const stolen=await app.inject({method:'POST',url:'/api/respond',headers:bearer(second.token),payload});
+  assert.equal(stolen.json().error.code,'OPERATION_CONFLICT');
+});
+
+test('explicitly linked common responses stay linked when their edit token changes RSVP',async t=>{
+  const {app,e}=await setup();t.after(()=>app.close());const link=await invite(app,e,'common');
+  const submitted=(await app.inject({method:'POST',url:'/api/respond',headers:bearer(link.token),payload:answer(e)})).json();
+  const memberId=randomUUID();
+  const linked=await app.inject({method:'POST',url:`/api/admin/events/${e.id}/submissions/${submitted.submission.id}/link`,headers:auth,payload:{operationId:randomUUID(),expectedVersion:1,memberId}});
+  assert.equal(linked.statusCode,200,linked.body);
+  const edited=await app.inject({method:'POST',url:'/api/respond',headers:bearer(submitted.editToken),payload:answer(e,{expectedVersion:2,rsvp:'declined'})});
+  assert.equal(edited.statusCode,200,edited.body);assert.equal(edited.json().submission.verification,'linked');
+  const snapshot=(await app.inject({url:`/api/admin/events/${e.id}/responses`,headers:auth})).json();
+  assert.equal(snapshot.submissions[0].memberId,memberId);
+});
+
+test('removed poll candidates retain historical selection after voting closes without blocking RSVP edits',async t=>{
+  let clock=new Date('2026-10-12T11:00:00Z');
+  const {app,e}=await setup({now:()=>clock});t.after(()=>app.close());const link=await invite(app,e);
+  assert.equal((await app.inject({method:'POST',url:'/api/respond',headers:bearer(link.token),payload:answer(e)})).statusCode,200);
+  const changed=await app.inject({method:'POST',url:'/api/admin/events',headers:auth,payload:{operationId:randomUUID(),expectedVersion:1,event:{...e,pollOptions:[{id:'date-b',label:'남은 후보'}],pollDeadline:'2026-10-12T12:00:00Z'}}});
+  clock=new Date('2026-10-12T13:00:00Z');
+  const current=changed.json().event;
+  const retained=await app.inject({method:'POST',url:'/api/respond',headers:bearer(link.token),payload:answer(current,{expectedVersion:1,rsvp:'declined'})});
+  assert.equal(retained.statusCode,200,retained.body);assert.deepEqual(retained.json().submission.selectedOptions,['date-a']);
+  const newVote=await app.inject({method:'POST',url:'/api/respond',headers:bearer(link.token),payload:answer(current,{expectedVersion:2,selectedOptions:['date-b']})});
+  assert.equal(newVote.json().error.code,'POLL_CLOSED');
+});

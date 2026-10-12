@@ -35,18 +35,22 @@ React/TS/Vite 모바일 응답 웹과 Fastify/TS/SQLite 단일 서버. 상세→
 | --- | --- | --- |
 | 웹·서버 타입 검사 | PASS | Node24.21.0, npm run typecheck |
 | 웹·서버 빌드 | PASS | Vite 프로덕션 번들, 서버 tsc |
-| 서버 테스트 | PASS 9 | Fastify inject: 인증/GET/권한/중복/충돌/정원/마감/입금 주장/재시작/인코딩 경로/마감 후 회수 |
-| 웹 로직 테스트 | PASS 5 | 작업 ID·불확실 재시도·입력·삭제 후보 유지 |
-| Android 순수 Kotlin | PASS 6 | 캐시 Kotlin 컴파일러+테스트 엔터티 stub. Compose/Room 전체 빌드는 아님 |
+| 서버 테스트 | PASS 13 | 인증/GET/권한/중복/충돌/정원/마감/입금 주장/재시작/인코딩 경로/마감 후 회수/회원 연결 유지/삭제 후보/개인 영수증 보호 |
+| 웹 로직 테스트 | PASS 6 | 작업 ID·불확실 재시도·입력·삭제 후보 유지·세션 저장 |
+| Android 순수 Kotlin | PASS 7 | 실제 규칙/게시 본문+테스트 엔터티 stub. 전체 빌드는 CI 결과 참조 |
 | manifest/XML | PASS | 파싱, SMS 권한 없음, allowBackup=false |
 | 로컬 Gradle | 환경 차단 | DatagramSocket.bind EPERM, 설정 읽기 전 실패 |
-| GitHub APK/Android CI | 실행 예정 | 푸시 후 실제 결과로 갱신 필요 |
+| GitHub APK/Android CI | APK/단위 PASS, lint 재검증 | 1cf15b1, run38236802325에서 Compose/Room 컴파일·단위 테스트·APK 생성 성공; 설정 Flow lint 오류4건 수정 후 새 CI 필요 |
 | 로컬 통합 서버 포트 | 환경 차단 | Node24 listen 127.0.0.1:3000 EPERM. inject는 성공 |
 | 브라우저/에뮬레이터 | NOT_RUN | 로컬 서버/ADB 포트 차단 |
 | 실기/SKT 문자/Kakao 실제 공유 | NOT_RUN | 기종·회선·승인된 테스트 대상·실제 앱 등록 필요 |
 | 외부 응답/배포 | NOT_RUN | 호스트 미지정, 기존 운영 서버 변경 없음 |
 
 독립 리뷰의 서버/웹 4건과 Android 6건을 수정했다. 인증 우회와 마감 재시도는 실패 재현 테스트 후 수정/통과. 실제 기기 완료로 확대하지 않는다.
+
+추가 복구: 불확실 웹 요청은 작업 ID와 본문을 링크별 세션에 먼저 저장해 hard reload 후 회수한다. 408/429와 이전 미확인 작업의 후속 오류에서도 작업을 잃지 않는다. 행사 취소가 Room→게시→웹까지 전달되고 기존 응답은 보존된다. 원장 한 건 금액 상한은 10억 원이다. 주요 색 대비6쌍 계산 결과 모두 4.5:1 이상(최저5.47:1).
+
+실제 Chrome 검증을 GitHub Ubuntu24.04 CI에 추가했다. 가상 회원만으로 참석/안내/투표·입금 주장·응답 유실 후 hard reload/동일 작업 회수를 확인하며 화면은 member-web-screenshots 아티팩트에 보관한다. 최초 실행 결과 확인 전 PASS로 표시하지 않는다.
 
 ## 남은 조건과 다음 작업
 
