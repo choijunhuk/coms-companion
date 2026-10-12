@@ -19,6 +19,15 @@ jobs:
       - run: npm run audit:public
       - name: Real browser response and lost-save recovery
         run: node scripts/browser-smoke.ts
+      - name: Fixture screenshots for sandbox visual inspection
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import base64
+          from pathlib import Path
+          for path in sorted(Path('artifacts').glob('member-*.png')):
+              print('COMPANION_SCREENSHOT ' + path.name + ' ' + base64.b64encode(path.read_bytes()).decode())
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:

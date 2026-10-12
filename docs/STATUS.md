@@ -52,6 +52,8 @@ React/TS/Vite 모바일 응답 웹과 Fastify/TS/SQLite 단일 서버. 상세→
 
 실제 Chrome 검증을 GitHub Ubuntu24.04 CI에 추가했다. 가상 회원만으로 참석/안내/투표·입금 주장·응답 유실 후 hard reload/동일 작업 회수를 확인하며 화면은 member-web-screenshots 아티팩트에 보관한다. 최초 실행 결과 확인 전 PASS로 표시하지 않는다.
 
+run38239240792의 Chrome에서 공통 응답 저장/수정 토큰 발급까지 확인 후 같은 탭 개인 링크 전환에 실패했다. hashchange 시 이전 화면 상태가 남던 원인을 수정했다. 기존 스모크 경로로 재검증한다. 캡처는 가상 데이터만 사용하며 제한된 로컬 환경의 시각 확인을 위해 CI 로그에도 인코딩본을 남긴다.
+
 ## 남은 조건과 다음 작업
 
 1. GitHub CI의 전체 Android 컴파일/Room/KSP/lint/APK를 확인·수정하고 커밋/검증 갱신.
