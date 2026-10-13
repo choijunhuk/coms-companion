@@ -69,3 +69,7 @@ Room v4에 명시적 1→2→3→4 migration을 제공한다. AES-GCM/PBKDF2 암
 5. CI 디버그 서명은 실행별로 다를 수 있다. 데이터가 있는 앱을 삭제해 업데이트 문제를 해결하지 말고 안정된 비공개 서명과 암호화 백업을 준비한다.
 
 전용 QA AVD는 COMsCompanion_QA(5580)이며 테스트용 로컬 서버는 3100이다. 앱 잠금을 OS 인증 후 비활성화하고 전용 AVD에 설정했던 임시 테스트 PIN을 제거했으며 글자 배율/테마도 원상복구했다. 다른 기존 에뮬레이터/운영 DB를 이어 쓰지 않는다. 다음 세션은 실제 git HEAD/origin, 이 문서, API_COMPLETION과 COMPLETION_PLAN을 먼저 읽고 외부 조건부터 이어간다.
+
+## 개발환경 보완
+
+2026-10-13 사용자 요청으로 반복 PreToolUse 실패를 진단했다. 로컬 OMC의 Codex 미지원 출력 필드를 제거하고 원본을 백업했다. 허용·안내·갱신·차단 격리 검사와 활성 훅 검사 통과, 차단 deny 보존. doctor 21 pass/0 failed/1 기존 설정 경고. UI UX Pro Max를 사용자 Codex 스킬로 설치하고 React/Compose 오프라인 검색을 확인했다. 기존 Playwright MCP의 실제 로컬 접속/390px 캡처/접근성 스냅샷도 통과했다. 공개 저장소에는 로컬 설정·로그를 넣지 않고 [DEV_TOOLS](DEV_TOOLS.md)의 사용법과 호환 조건만 기록한다.
