@@ -31,7 +31,8 @@ export class Store {
       CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY, payload TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS links(id TEXT PRIMARY KEY, token_hash TEXT UNIQUE NOT NULL,
         event_id TEXT NOT NULL REFERENCES events(id), kind TEXT NOT NULL, member_id TEXT,
-        submission_id TEXT, scopes TEXT NOT NULL, expires_at TEXT NOT NULL, revoked INTEGER NOT NULL DEFAULT 0);
+        submission_id TEXT, scopes TEXT NOT NULL, expires_at TEXT NOT NULL, revoked INTEGER NOT NULL DEFAULT 0,
+        parent_link_id TEXT REFERENCES links(id));
       CREATE TABLE IF NOT EXISTS submissions(id TEXT PRIMARY KEY, event_id TEXT NOT NULL REFERENCES events(id),
         member_id TEXT, payload TEXT NOT NULL, UNIQUE(event_id,member_id));
       CREATE TABLE IF NOT EXISTS payments(id TEXT PRIMARY KEY, event_id TEXT NOT NULL REFERENCES events(id),
@@ -40,7 +41,26 @@ export class Store {
         receipt TEXT NOT NULL, created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY AUTOINCREMENT, actor TEXT NOT NULL,
         action TEXT NOT NULL, entity_id TEXT NOT NULL, before_value TEXT, after_value TEXT, created_at TEXT NOT NULL);
-      PRAGMA user_version=1;`);
+      CREATE TABLE IF NOT EXISTS changes(sequence INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT NOT NULL,
+        kind TEXT NOT NULL, entity_id TEXT NOT NULL, member_id TEXT, payload TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS changes_event ON changes(event_id,sequence);`);
+    if(!this.rows('PRAGMA table_info(links)').some(row=>row.name==='parent_link_id'))this.transaction(()=>{
+      this.db.exec('ALTER TABLE links ADD COLUMN parent_link_id TEXT REFERENCES links(id)');
+      // Prior common-response receipts retain the child token and its issuing token hash.
+      for(const row of this.rows("SELECT * FROM operations WHERE owner!='admin'")){
+        const receipt=this.decrypt<{editToken?:string}>(String(row.receipt));
+        if(typeof receipt?.editToken!=='string')continue;
+        const parent=this.row("SELECT id FROM links WHERE token_hash=? AND kind='common'",String(row.owner));
+        if(parent)this.run("UPDATE links SET parent_link_id=? WHERE token_hash=? AND kind='submission' AND parent_link_id IS NULL",String(parent.id),hash(receipt.editToken));
+      }
+    });
+    this.db.exec('PRAGMA user_version=3');
+    // Old databases have no change log; seed once without changing their records.
+    if(!this.row('SELECT sequence FROM changes LIMIT 1'))this.transaction(()=>{
+      for(const row of this.rows('SELECT * FROM events'))this.change(String(row.id),'event',String(row.id),null,JSON.parse(String(row.payload)));
+      for(const row of this.rows('SELECT * FROM submissions'))this.change(String(row.event_id),'submission',String(row.id),row.member_id as string|null,JSON.parse(String(row.payload)));
+      for(const row of this.rows('SELECT * FROM payments'))this.change(String(row.event_id),'payment',String(row.id),String(row.member_id),JSON.parse(String(row.payload)));
+    });
   }
   row(sql:string,...args:(string|number|null)[]):SqlRow|undefined {
     return this.db.prepare(sql).get(...args) as SqlRow|undefined;
@@ -79,6 +99,9 @@ export class Store {
   }
   audit(actor:string,action:string,id:string,before:unknown,after:unknown,now:string) {
     this.run('INSERT INTO audit(actor,action,entity_id,before_value,after_value,created_at) VALUES(?,?,?,?,?,?)',actor,action,id,before===null?null:JSON.stringify(before),after===null?null:JSON.stringify(after),now);
+  }
+  change(eventId:string,kind:'event'|'submission'|'payment',id:string,memberId:string|null,value:unknown) {
+    this.run('INSERT INTO changes(event_id,kind,entity_id,member_id,payload) VALUES(?,?,?,?,?)',eventId,kind,id,memberId,JSON.stringify(value));
   }
   close(){this.db.close();}
 }

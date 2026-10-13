@@ -5,6 +5,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 import { buildApp } from '../apps/server/src/app.ts';
 
@@ -233,7 +234,11 @@ try {
   console.log(`Screenshots: ${artifacts}/member-{detail,response,payment}.png`);
 } finally {
   socket?.close();
-  browser?.kill();
+  if (browser && browser.exitCode === null && browser.signalCode === null) {
+    const closed = once(browser, 'close');
+    browser.kill();
+    await bounded(closed, 'Chrome shutdown');
+  }
   await app?.close();
-  rmSync(temporary, { recursive: true, force: true });
+  rmSync(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }

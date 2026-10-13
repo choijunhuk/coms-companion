@@ -9,9 +9,9 @@ type EventView = {
 };
 type Submission = {
   id: string; name: string; rsvp: Rsvp; noticeAcknowledged: boolean;
-  selectedOptions: string[]; version: number; eventVersion: number; updatedAt: string; verification: 'pending' | 'linked';
+  selectedOptions: string[]; version: number; eventVersion: number; updatedAt: string; verification: 'pending' | 'linked'; source?: 'operator' | 'member';
 };
-type PaymentRequest = { id: string; amount: number; depositorName: string; depositedAt: string; status: 'pending' | 'confirmed' | 'rejected'; createdAt: string };
+type PaymentRequest = { id: string; amount: number; confirmedAmount?: number; depositorName: string; depositedAt: string; status: 'pending' | 'confirmed' | 'rejected'; createdAt: string };
 type Context = {
   event: EventView;
   access: { kind: 'common' | 'personal' | 'submission'; state: 'open' | 'closed' | 'cancelled' | 'expired' | 'revoked'; scopes: ('rsvp' | 'notice' | 'vote' | 'payment')[]; canPay: boolean; message: string };
@@ -246,8 +246,8 @@ function App() {
       {access && !open && <div className="alert" role="status">ℹ {access.message || stateLabels[access.state]} {access.state === 'closed' && context?.submission ? '저장된 응답은 아래에서 확인할 수 있어요.' : ''}</div>}
       {open && access?.scopes.includes('vote') && !pollOpen && <div className="alert" role="status">ℹ 일정 투표가 마감됐어요. 저장된 선택은 확인할 수 있어요.</div>}
       {step === 'detail' && <>
-        {canRespond && context?.submission && <section className="card"><h2>저장된 응답</h2>{access?.scopes.includes('rsvp') && <p>참석: {rsvpLabels[context.submission.rsvp]}</p>}{access?.scopes.includes('notice') && <p>안내: {context.submission.noticeAcknowledged ? '확인함' : '미확인'}</p>}{access?.scopes.includes('vote') && <p>선택한 일정: {optionLabels(context.submission.selectedOptions)}</p>}<p className="muted">{context.submission.verification === 'pending' ? '운영자 확인 대기' : '회원 연결됨'} · {displayDate(context.submission.updatedAt)}</p></section>}
-        {access?.kind === 'personal' && context?.paymentRequests.map((item) => <section className="card" key={item.id}><h2>입금 확인 요청</h2><p>{amount.format(item.amount)}원 · {item.status === 'pending' ? '운영자 확인 대기' : item.status === 'confirmed' ? '운영자가 확인함' : '운영자가 반려함'}</p></section>)}
+        {canRespond && context?.submission && <section className="card"><h2>저장된 응답</h2>{access?.scopes.includes('rsvp') && <p>참석: {rsvpLabels[context.submission.rsvp]}</p>}{access?.scopes.includes('notice') && <p>안내: {context.submission.noticeAcknowledged ? '확인함' : '미확인'}</p>}{access?.scopes.includes('vote') && <p>선택한 일정: {optionLabels(context.submission.selectedOptions)}</p>}{context.submission.source === 'operator' && <p className="muted">운영자가 수기 등록한 응답이에요. 이 링크에서 직접 제출한 기록은 아니에요.</p>}<p className="muted">{context.submission.verification === 'pending' ? '운영자 확인 대기' : '회원 연결됨'} · {displayDate(context.submission.updatedAt)}</p></section>}
+        {access?.kind === 'personal' && context?.paymentRequests.map((item) => <section className="card" key={item.id}><h2>입금 확인 요청</h2><p>요청 {amount.format(item.amount)}원 · {item.status === 'pending' ? '운영자 확인 대기' : item.status === 'confirmed' ? item.confirmedAmount === undefined ? '운영자가 확인함' : `확인 ${amount.format(item.confirmedAmount)}원 · 운영자가 확인함` : '운영자가 반려함'}</p></section>)}
         {open && <div className="actions">{canEditResponse && <button type="button" onClick={() => setStep('edit')}>{context?.submission ? '응답 수정' : '응답하기'}</button>}{access?.kind === 'personal' && access.canPay && <button type="button" className="secondary" onClick={() => setStep('payment')}>입금 확인 요청</button>}</div>}
       </>}
       {(step === 'edit' || step === 'review') && open && !uncertainResponse && <>

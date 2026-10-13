@@ -22,7 +22,7 @@ export function bool(value:unknown):boolean {if(typeof value!=='boolean')invalid
 export function date(value:unknown,nullable=false):string|null {
   if(nullable&&value===null)return null;
   const text=string(value,'일시',40);
-  if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/.test(text)||!Number.isFinite(Date.parse(text)))invalid('시간대가 포함된 일시가 필요해요.');
+  if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:\d{2})$/.test(text)||!Number.isFinite(Date.parse(text)))invalid('시간대가 포함된 일시가 필요해요.');
   return new Date(text).toISOString();
 }
 export function choices(value:unknown,max=20):string[] {
