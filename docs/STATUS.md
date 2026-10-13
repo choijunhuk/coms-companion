@@ -44,10 +44,25 @@ Room v4에 명시적 1→2→3→4 migration을 제공한다. AES-GCM/PBKDF2 암
 | 다크/큰 글자 | PASS | 실제 다크 홈과 1.3배 글자 화면, 다섯 탭 레이블 확인. 이미지 참조 없이 문서 명세 기준 시각 검토 |
 | 앱 잠금 | PASS | 실제 HOME 전환·전경 상실, 개인정보 창 제거/인증 취소 차단, PIN 인증 후 기존 회원 수정 초안 보존 |
 | 문자 작성/복귀 | PASS | 전용 에뮬레이터 기본 문자 앱에 가상 번호와 본문 전달, ContactRecord=앱 전달됨, 인증 후 복귀에서도 발송 완료로 바뀌지 않음. 전송 버튼 미실행 |
-| 실기 SKT/실제 Kakao 공유 | NOT_RUN | 연결 실기·승인된 실제 대상·Kakao 등록 미제공 |
+| 실기 SKT/실제 Kakao 공유 | NOT_RUN | 휴대폰 연결·설치 요청은 받았으나 현재 세션에서 ADB 실행이 차단됨. 승인된 실제 대상·Kakao 등록도 별도 조건 |
 | 공개 HTTPS 운영 호스트 | NOT_RUN | 도메인/호스트 미지정. 기존 COMS 운영 서비스 변경 없음 |
 
 독립 리뷰의 탈퇴 후 연결된 공통 수정 권한, 출석만 기록한 게시, 구백업 동기화 중단을 수정하고 재검토했다. 실제 왕복에서 나노초 시각·준비 영수증 memberId·Android 암호 오류 메시지·잠금 후 입력 초기화를 추가 수정했다. 검증 자동화의 빠른 입력/키보드/Activity 전환 경합은 실제 창 상태를 확인해 구별했다. 가상 데이터만 사용했으며 실입금·실발송으로 확대하지 않는다.
+
+## 연결 휴대폰 설치·검증 요청 (2026-10-13)
+
+사용자가 휴대폰 연결 후 빌드·설치·테스트를 요청했다. 확인 당시 HEAD는 `a4fc385a13022451611c75461515ec3f9d5916ec`이고 작업 트리는 깨끗했다. Android 추적 소스·빌드 설정은 기존 검증 소스 `052839d698002d5299a3abf87cd2f5a7fad01124`와 차이가 없었다. 제품 코드와 휴대폰 데이터는 변경하지 않았다.
+
+| 구분 | 결과 | 증거와 한계 |
+| --- | --- | --- |
+| 새 Gradle 빌드·lint | BLOCKED | 기본 Gradle 홈의 wrapper lock 쓰기가 거부됨. 작업 폴더의 Gradle 홈과 설치된 Gradle 9.4.1로 재시도했으나 내부 소켓 생성이 `Operation not permitted`로 차단되어 빌드를 시작하지 못함 |
+| 기존 Android 단위 테스트 재실행 | PASS 18 | JDK17의 `org.junit.runner.JUnitCore`로 Rules/Operations/RemoteApi/Save/BackupCrypto 테스트 실행. 기존 컴파일 결과와 캐시 의존성을 재사용했으며 새 컴파일·Gradle 검증·실기 테스트가 아님. 첫 시도에서 빠진 Room 클래스 경로를 보완한 뒤 18개 모두 통과 |
+| 기존 APK 서명·무결성·정보 | PASS | `apksigner verify --verbose`, `aapt2 dump badging`, SHA256 확인. 패키지 `kr.coms.companion`, 버전0.1.0, minSdk26, 디버그 v2 서명, 21,866,175바이트. SEND_SMS/READ_SMS/RECEIVE_SMS/READ_CONTACTS 없음 |
+| 휴대폰 확인·설치·실행·화면 검사 | BLOCKED / NOT_RUN | ADB 서버의 로컬5037 소켓이 차단되어 기기 목록을 얻지 못함. 대체 명령 도구와 Terminal/Android Studio 접근도 세션 정책에서 거부됨. 기종·OS·USB 디버깅 승인 상태를 확인한 것으로 보고하지 않음 |
+
+기존 APK 해시는 `4ff6ad46c8b41badb3a8239150153befea985f98b52a63f31e733f94ae2035da`로 앞선 로컬 검증 기록과 일치한다. Git에서 제외된 `artifacts/physical-device-attempt-2026-10-13/COMs-Companion-0.1.0-debug.apk`에 동일 해시의 사본과 서명 검사·JUnit 결과를 준비했다. 새 빌드나 휴대폰 다운로드·설치 완료로 표현하지 않는다.
+
+다음 작업은 ADB 실행이 허용되는 환경에서 실제 기기 목록·기존 설치와 서명을 확인한 뒤 데이터 보존 업데이트 설치, 다섯 탭·저장/재실행·키보드·외부 앱 복귀를 검증하는 것이다. 실제 문자·카카오톡 발송과 운영 서버 변경은 실행하지 않았다.
 
 ## 커밋/CI 체크포인트
 
