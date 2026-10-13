@@ -21,7 +21,7 @@ cd apps/android
 ./gradlew testDebugUnitTest lintDebug assembleDebug
 ```
 
-APK는 `apps/android/app/build/outputs/apk/debug/app-debug.apk`에 생성됩니다. 디버그 APK 빌드와 설치·실행, 에뮬레이터, 실기 확인은 서로 다른 검증입니다. 실제 SKT 문자 전송과 Kakao 공유는 실기/실전송으로 검증하지 않았습니다.
+APK는 `apps/android/app/build/outputs/apk/debug/app-debug.apk`에 생성됩니다. 2026-10-14 Galaxy S24 Ultra(SM-S928N, Android 16)에서 설치·실행, 저장·재실행, 기본 문자 앱의 한글 작성 화면과 공식 Kakao 공유 선택 화면을 확인했습니다. 실제 문자·카카오톡 전송과 상대의 수신은 검증하지 않았습니다. 상세 범위는 [STATUS](docs/STATUS.md)를 확인하세요.
 
 ## 웹·서버 실행
 
@@ -46,7 +46,19 @@ npm start
 
 ## Kakao 설정
 
-현재 체크한 로컬 프로젝트에서 값이 채워진 Kakao 설정 파일은 발견되지 않았습니다. 설정 예시는 [`apps/android/local.properties.example`](apps/android/local.properties.example)이며 `kakao.nativeAppKey`와 `kakao.shareUrl`이 비어 있습니다. 실제 Kakao Developers 앱 키와 등록 URL을 발급받아 비공개 `apps/android/local.properties`에 설정하기 전에는 공식 SDK 공유가 구성된 것으로 간주하지 않습니다. 설정이 없어도 일반 공유·복사 대안을 사용할 수 있습니다.
+2026-10-14 전용 Kakao Developers 앱을 등록하고 로컬 개발 빌드의 공식 공유 선택 화면을 실기에서 확인했습니다. 실제 키는 Git에서 제외되는 `apps/android/local.properties`에만 저장합니다. 공개 설정 예시와 CI에는 키가 없으므로 설정 없는 빌드는 일반 공유·복사 대안을 사용합니다.
+
+새 개발 환경에서는 [Android 시작하기](https://developers.kakao.com/docs/ko/android/getting-started)에 따라 네이티브 앱 키에 패키지 `kr.coms.companion`과 **설치할 APK의 인증서 키 해시**를 등록합니다. 제품 링크 관리의 웹 도메인에는 공유 버튼이 여는 HTTPS 주소의 origin을 등록하고, [`local.properties.example`](apps/android/local.properties.example)의 `kakao.nativeAppKey`와 `kakao.shareUrl`을 비공개 파일에 채운 뒤 다시 빌드합니다. 다른 디버그·릴리스·Play 서명을 사용하면 그 인증서 해시도 별도로 등록해야 합니다.
+
+현재 로컬 `kakao.shareUrl`은 공유 화면 검사에 사용한 [공개 개발 안내 페이지](https://github.com/choijunhuk/coms-companion)입니다. 회원 응답 웹이 배포된 주소가 아니며, 실제 회원 응답 서비스가 준비되면 공유 URL과 허용 도메인을 함께 바꿔야 합니다. 이 공유 구현에는 카카오 로그인 권한·REST API 키·어드민 키가 필요하지 않습니다. [공식 공유 안내](https://developers.kakao.com/docs/ko/kakaotalk-share/android-link)
+
+| 기능 | 필요한 설정 |
+| --- | --- |
+| 기본 문자 작성 / Android 일반 공유 | 외부 API 키 없음. 실제 발송은 해당 앱에서 사용자가 수행 |
+| 카카오 공식 공유 | 네이티브 앱 키, Android 패키지·서명 해시, 공유 URL·웹 도메인 |
+| 자체 회원 응답 API | HTTPS 호스트, `.env`의 `ADMIN_TOKEN`·`SERVER_ENCRYPTION_KEY`, 앱의 서버 주소·운영자 토큰 |
+
+현재 개발 컴퓨터에는 서버 비밀값도 비공개 `.env`에 준비했지만 공개 서버를 배포하거나 휴대폰의 온라인 연결을 설정하지 않았습니다. 서버 비밀값은 자체 생성하는 자격 증명이며 카카오에서 발급받는 키와 별개입니다.
 
 ## 데이터와 공개 저장소
 
