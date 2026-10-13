@@ -1,6 +1,6 @@
 # 현재 상태
 
-기준일: 2026-10-13 (Asia/Seoul). P1/P2와 수동 운영 도구의 코드를 구현했으며 로컬·브라우저·전용 에뮬레이터로 수용 검증 중이다. 공개 서비스 배포와 실기 통신 검증은 분리한다.
+기준일: 2026-10-13 (Asia/Seoul). P1/P2와 수동 운영 도구의 구현과 로컬·브라우저·전용 에뮬레이터 수용 검증을 완료했다. 공개 서비스 배포와 실기 통신 검증은 분리한다.
 
 ## 저장소와 공개 경계
 
@@ -41,6 +41,7 @@ Room v4에 명시적 1→2→3→4 migration을 제공한다. AES-GCM/PBKDF2 암
 | 복원 후 서버 행사 복구 | PASS | 백업 뒤 게시된 2건 검토 대기/커서5 유지, metadata v1→v2 재검토, 승인 뒤 커서8. 회원1/청구2/원장4/출석 행1 불변. 대기 기록 포함 백업 미리보기도 PASS |
 | 출석만 있는 최초 게시 | PASS | 먼저 미응답·출석=true 행 확인, 게시 후 출석 보존/응답 생성 없음 |
 | 운영 도구 화면 | PASS | 지출1,500원, 대여→반납 이력, 지원자 저장, 회의록·결정 저장/완료 |
+| 다크/큰 글자 | PASS | 실제 다크 홈과 1.3배 글자 화면, 다섯 탭 레이블 확인. 이미지 참조 없이 문서 명세 기준 시각 검토 |
 | 앱 잠금 | PASS | 실제 HOME 전환·전경 상실, 개인정보 창 제거/인증 취소 차단, PIN 인증 후 기존 회원 수정 초안 보존 |
 | 문자 작성/복귀 | PASS | 전용 에뮬레이터 기본 문자 앱에 가상 번호와 본문 전달, ContactRecord=앱 전달됨, 인증 후 복귀에서도 발송 완료로 바뀌지 않음. 전송 버튼 미실행 |
 | 실기 SKT/실제 Kakao 공유 | NOT_RUN | 연결 실기·승인된 실제 대상·Kakao 등록 미제공 |
@@ -52,14 +53,19 @@ Room v4에 명시적 1→2→3→4 migration을 제공한다. AES-GCM/PBKDF2 암
 
 - 첫 완료 서버 단계: `01e78ea84320a081d54513f28574c6aa1c28f87a`.
 - [해당 전체 성공 CI](https://github.com/choijunhuk/coms-companion/actions/runs/38354239953): Android·web-server success. 이 CI의 Android는 이전 기본 앱 코드이며 새 보호/동기화 화면의 CI와 구별한다.
-- 최신 Android/호환 보완 소스는 아래 후속 커밋·CI 확인으로 갱신한다. 로컬 검증을 CI 검증으로 표현하지 않는다.
+- 최종 검증 소스: `052839d698002d5299a3abf87cd2f5a7fad01124`, 원격 main과 일치.
+- [최종 전체 성공 CI](https://github.com/choijunhuk/coms-companion/actions/runs/38364642188): Android·web-server 둘 다 success, 새 보호/동기화/운영 도구 포함.
+- [개발 APK·JUnit·lint](https://github.com/choijunhuk/coms-companion/actions/runs/38364642188/artifacts/11797080107): android-verification, ZIP20,545,526바이트. 개발용 디버그 서명이며 실운영 서명이 아니다. 직접 다운로드한 APK21,147,559바이트, SHA256 `a8342310deedcc87c24ccabe71ab82454c5509b0878e37951e0144823c5b7919` 확인. JUnit HTML 보고서와 lint도 포함한다.
+- [회원 웹 캡처](https://github.com/choijunhuk/coms-companion/actions/runs/38364642188/artifacts/11796860283): 가상 데이터, 실제 Chrome.
+- 로컬 검사/설치 APK SHA256: `4ff6ad46c8b41badb3a8239150153befea985f98b52a63f31e733f94ae2035da`. CI ZIP/APK 해시와 혼동하지 않는다.
+- 공개 대상 추적 파일80개 검사와 staged diff 검사 PASS, 작업 트리 정리. 이 문서의 후속 커밋은 위 소스 검증 기록만 보완한다.
 
 ## 남은 외부 조건과 다음 세션
 
-1. 최종 source commit의 전체 CI·APK를 확인하고 문자/공유 로컬 점검 결과를 기록한다.
+1. 코드·로컬 수용·최종 CI는 완료했다. 다음 작업은 아래 외부 환경 설정과 실제 기기 수용이다. 일반 Android 공유의 실제 상대 선택/전송과 Kakao SDK 실제 결과는 별도 확인한다.
 2. 사용자는 도메인이 없다. 자체 도메인 구매는 필수 조건이 아니지만 회원이 접속할 지속적인 HTTPS 호스트가 필요하다. `.env.example`·README에 따라 비공개 서버 키/DB/백업과 운영자 토큰을 설정한 뒤 다른 기기 접근/장애 복구를 확인한다.
 3. Desktop 관련 프로젝트와 Documents/Downloads에서 값이 채워진 Kakao 설정 파일을 찾지 못했다. `apps/android/local.properties.example`의 `kakao.nativeAppKey`, `kakao.shareUrl`은 비어 있고 실제 입력 위치는 Git에서 제외된 `apps/android/local.properties`다. Kakao 앱 등록·키 해시·허용 URL·실기 공유를 확인해야 한다.
 4. 실제 SKT 기종/OS/SIM/요금제와 승인된 테스트 대상/내용을 정한 뒤 한글·장문·회선 선택·취소/복귀·실제 전송을 별도 검증한다. 실제 상대에게 임의 전송하지 않았다.
 5. CI 디버그 서명은 실행별로 다를 수 있다. 데이터가 있는 앱을 삭제해 업데이트 문제를 해결하지 말고 안정된 비공개 서명과 암호화 백업을 준비한다.
 
-전용 QA AVD는 COMsCompanion_QA(5580)이며 테스트용 로컬 서버는 3100이다. 다른 기존 에뮬레이터/운영 DB를 이어 쓰지 않는다. 다음 세션은 실제 git HEAD/origin, 이 문서, API_COMPLETION과 COMPLETION_PLAN을 먼저 읽고 외부 조건부터 이어간다.
+전용 QA AVD는 COMsCompanion_QA(5580)이며 테스트용 로컬 서버는 3100이다. 앱 잠금을 OS 인증 후 비활성화하고 전용 AVD에 설정했던 임시 테스트 PIN을 제거했으며 글자 배율/테마도 원상복구했다. 다른 기존 에뮬레이터/운영 DB를 이어 쓰지 않는다. 다음 세션은 실제 git HEAD/origin, 이 문서, API_COMPLETION과 COMPLETION_PLAN을 먼저 읽고 외부 조건부터 이어간다.
