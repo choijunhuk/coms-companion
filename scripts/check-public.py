@@ -7,7 +7,7 @@ import sys
 
 root = pathlib.Path(__file__).resolve().parents[1]
 names = subprocess.check_output(['git', 'ls-files', '-z'], cwd=root).decode().split('\0')
-private_suffixes = {'.db', '.sqlite', '.sqlite3', '.jks', '.keystore', '.p12', '.pem', '.key', '.apk', '.aab'}
+private_suffixes = {'.db', '.sqlite', '.sqlite3', '.jks', '.keystore', '.p12', '.pem', '.key', '.apk', '.aab', '.comsbak'}
 private_dirs = {'private-data', 'backups', 'exports', 'logs', '.omx', '.omc', 'node_modules', '.tmp'}
 credential_patterns = [
     re.compile(rb'gh[pousr]_[A-Za-z0-9]{20,}'),

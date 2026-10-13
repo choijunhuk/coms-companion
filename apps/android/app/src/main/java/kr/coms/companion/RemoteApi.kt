@@ -10,29 +10,32 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
-class ApiFailure(val status: Int, message: String) : IOException(message) {
+class ApiFailure(val status: Int, message: String, val currentJson: String = "", val code: String = "") : IOException(message) {
     val definitiveNoSave: Boolean get() = status in 400..499 && status != 408 && status != 429
 }
 
 fun checkedBaseUrl(value: String, debug: Boolean): String {
     val uri = URI(value.trim())
-    require(uri.userInfo == null && uri.query == null && uri.fragment == null) { "주소에는 계정·쿼리·조각을 넣지 마세요" }
+    require(uri.userInfo == null && uri.query == null && uri.fragment == null && (uri.path.isNullOrEmpty() || uri.path == "/")) {
+        "서버 주소는 경로가 없는 원본 주소로 입력해 주세요"
+    }
     require(uri.host != null && (uri.scheme == "https" || debug && uri.scheme == "http" && uri.host == "10.0.2.2")) {
         "HTTPS 주소가 필요해요. 에뮬레이터 디버그에서는 http://10.0.2.2만 허용해요"
     }
     return value.trim().trimEnd('/')
 }
 
-fun publishPayload(event: Event, operationId: String): JSONObject {
+fun publishPayload(event: Event, operationId: String, clubName: String = "COM’s", initialResponses: JSONArray = JSONArray()): JSONObject {
     fun time(value: String): Any = if (value.isBlank()) JSONObject.NULL else OffsetDateTime.parse(value).toInstant().toString()
     val eventView = JSONObject()
-        .put("id", event.id).put("clubName", "COM’s").put("title", event.title)
+        .put("id", event.id).put("clubName", clubName).put("title", event.title)
         .put("startsAt", time(event.whenText)).put("location", event.place)
         .put("feeAmount", event.feeWon).put("capacity", event.capacity ?: JSONObject.NULL)
         .put("deadline", time(event.deadline)).put("notice", event.details)
         .put("cancelled", event.cancelled).put("version", event.serverVersion)
-        .put("pollOptions", JSONArray()).put("pollDeadline", JSONObject.NULL)
+        .put("pollOptions", JSONArray(event.pollOptionsJson)).put("pollDeadline", time(event.pollDeadline))
     return JSONObject().put("operationId", operationId).put("expectedVersion", event.serverVersion).put("event", eventView)
+        .apply { if (event.serverVersion == 0 && initialResponses.length() > 0) put("initialResponses", initialResponses) }
 }
 
 fun linkPayload(invite: Invite): JSONObject = JSONObject()
@@ -43,9 +46,27 @@ fun linkPayload(invite: Invite): JSONObject = JSONObject()
 class RemoteApi(private val baseUrl: String, private val adminToken: String) {
     init { require(adminToken.isNotBlank()) { "운영자 토큰을 입력해 주세요" } }
 
-    suspend fun publish(payload: String): Int = request("POST", "/api/admin/events", payload).getJSONObject("event").getInt("version")
+    suspend fun publish(payload: String): Int = publishDetails(payload).getJSONObject("event").getInt("version")
+    suspend fun publishDetails(payload: String): JSONObject = request("POST", "/api/admin/events", payload)
     suspend fun createLink(eventId: String, invite: Invite): String = request("POST", "/api/admin/events/$eventId/links", linkPayload(invite).toString()).getString("url")
+    suspend fun revokeLink(eventId: String, payload: String): JSONObject =
+        request("POST", "/api/admin/events/$eventId/links/revoke", payload)
+    suspend fun revokeMemberLinks(eventId: String, payload: String): JSONObject =
+        request("POST", "/api/admin/events/$eventId/links/revoke-member", payload)
     suspend fun responses(eventId: String): String = request("GET", "/api/admin/events/$eventId/responses").toString()
+    suspend fun changes(cursor: Long): JSONObject = request("GET", "/api/admin/changes?cursor=$cursor")
+    suspend fun linkSubmission(eventId: String, submissionId: String, payload: String): JSONObject =
+        request("POST", "/api/admin/events/$eventId/submissions/$submissionId/link", payload)
+    suspend fun updateSubmission(eventId: String, submissionId: String, payload: String): JSONObject =
+        request("POST", "/api/admin/events/$eventId/submissions/$submissionId", payload)
+    suspend fun createSubmission(eventId: String, payload: String): JSONObject =
+        request("POST", "/api/admin/events/$eventId/submissions", payload)
+    suspend fun reviewPayment(eventId: String, requestId: String, payload: String): JSONObject =
+        request("POST", "/api/admin/events/$eventId/payments/$requestId/review", payload)
+    suspend fun preparePayment(eventId: String, requestId: String, payload: String): JSONObject =
+        request("POST", "/api/admin/events/$eventId/payments/$requestId/review/prepare", payload)
+    suspend fun commitPayment(eventId: String, requestId: String, payload: String): JSONObject =
+        request("POST", "/api/admin/events/$eventId/payments/$requestId/review/commit", payload)
 
     private suspend fun request(method: String, path: String, body: String? = null): JSONObject = withContext(Dispatchers.IO) {
         val connection = (URL(baseUrl + path).openConnection() as HttpURLConnection)
@@ -65,7 +86,9 @@ class RemoteApi(private val baseUrl: String, private val adminToken: String) {
             val text = (if (status in 200..299) connection.inputStream else connection.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
             if (status !in 200..299) {
                 val message = runCatching { JSONObject(text).getJSONObject("error").getString("message") }.getOrDefault("서버 오류 $status")
-                throw ApiFailure(status, "$message ($status)")
+                val current = runCatching { JSONObject(text).optJSONObject("current")?.toString().orEmpty() }.getOrDefault("")
+                val code = runCatching { JSONObject(text).getJSONObject("error").getString("code") }.getOrDefault("")
+                throw ApiFailure(status, "$message ($status)", current, code)
             }
             JSONObject(text)
         } finally { connection.disconnect() }

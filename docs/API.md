@@ -33,7 +33,7 @@ type PaymentRequest = {
 };
 ```
 
-회원에게 공개되는 `confirmedAmount`는 요청 상태가 확정됐을 때만 포함합니다. 운영자 전용 owner/charge/ledger ID와 검토 영수증은 공개 응답에 포함되지 않습니다. `source`는 운영자 수동 등록과 회원 제출을 구별합니다.
+회원용 응답의 `confirmedAmount`는 요청 상태가 확정됐을 때만 포함합니다. 운영자용 납부 `request`에는 실제 회원 `memberId`가 포함되지만 회원 GET에서는 회원 연결 ID, owner/charge/ledger ID와 검토 영수증을 노출하지 않습니다. `source`는 운영자 수동 등록과 회원 제출을 구별합니다.
 
 ## 회원 경로
 
@@ -54,18 +54,18 @@ type PaymentRequest = {
 | `POST /api/admin/events` | 행사 생성/수정. `{operationId,expectedVersion,event}`. 최초 생성에만 선택 필드 `initialResponses`를 허용하며 행사와 최대 500개 수동 응답을 한 트랜잭션으로 저장합니다. |
 | `POST /api/admin/events/:id/links` | 공통/개인 링크 발급. `{operationId,kind,memberId?,expiresAt,scopes?}`. 원문 토큰은 해당 발급 결과에서만 반환됩니다. |
 | `POST /api/admin/events/:id/links/revoke` | `{operationId,issuedOperationId}`로 발급 작업을 지정해 해당 링크를 취소합니다. 공통 링크에서 파생된 자기 제출 수정 링크도 취소합니다. |
-| `POST /api/admin/events/:id/links/revoke-member` | `{operationId,memberId}`로 이 행사에서 해당 회원의 개인 링크를 취소합니다. 응답은 `{revokedCount}`입니다. |
+| `POST /api/admin/events/:id/links/revoke-member` | `{operationId,memberId}`로 이 행사에서 해당 회원의 개인 링크와 그 회원에 연결된 공통 제출 수정 링크를 취소합니다. 응답은 `{revokedCount}`입니다. |
 | `POST /api/admin/links/:id/revoke` | 링크 UUID로 취소합니다. 공통 링크이면 파생 수정 링크도 함께 취소합니다. |
 | `GET /api/admin/events/:id/responses` | 행사 응답과 입금 요청의 운영자용 스냅샷을 반환합니다. 검토 영수증은 이 운영자 응답에만 제공됩니다. |
 | `GET /api/admin/changes?cursor=N` | 변경 로그를 순서대로 최대 100건 반환합니다. 커서가 앞서 있으면 `CURSOR_RESET`을 반환하며 클라이언트가 전체 스냅샷과 ID upsert로 복구합니다. |
 | `POST /api/admin/events/:id/submissions` | 게시 후 운영자 응답 제안을 생성합니다. `{operationId,id,memberId,expectedVersion:0,eventVersion,name,rsvp,noticeAcknowledged,selectedOptions}`. 기존 회원 응답이 있으면 덮어쓰지 않고 충돌을 돌려줍니다. |
 | `POST /api/admin/events/:id/submissions/:submissionId` | 기준 응답 버전이 일치할 때 운영자 제안을 수정합니다. 충돌 응답에는 최신 서버 응답이 포함됩니다. |
 | `POST /api/admin/events/:id/submissions/:submissionId/link` | `{operationId,expectedVersion,memberId}`로 운영자가 미확인 제출을 회원과 명시적으로 연결합니다. 이름으로 자동 연결하지 않습니다. |
-| `POST /api/admin/events/:id/payments/:requestId/review/prepare` | `{operationId,reviewId,ledgerEntryId,chargeId,confirmedAmount,ownerId,reason}`로 단일 납부 검토와 원장 ID를 예약합니다. 예약 동안 회원 화면 상태는 대기입니다. |
-| `POST /api/admin/events/:id/payments/:requestId/review/commit` | `{operationId,reviewId,ledgerEntryId}`로 로컬 원장 반영 뒤 서버 검토를 확정합니다. 재시도는 같은 검토 영수증을 반환합니다. |
-| `POST /api/admin/events/:id/payments/:requestId/review` | `{operationId,status:'rejected',reason}`로 반려합니다. 확인은 prepare/commit 단계를 사용하며 이 경로의 직접 `confirmed`는 거부됩니다. |
+| `POST /api/admin/events/:id/payments/:requestId/review/prepare` | `{operationId,reviewId,ledgerEntryId,chargeId,confirmedAmount,ownerId,reason}`로 단일 납부 검토와 원장 ID를 예약합니다. 운영자 응답의 `request`에 실제 `memberId`가 포함되며 회원 화면 상태는 대기입니다. |
+| `POST /api/admin/events/:id/payments/:requestId/review/commit` | `{operationId,reviewId,ledgerEntryId}`로 로컬 원장 반영 뒤 서버 검토를 확정합니다. 운영자 `request`에 `memberId`가 포함되며 재시도는 같은 검토 영수증을 반환합니다. |
+| `POST /api/admin/events/:id/payments/:requestId/review` | `{operationId,status:'rejected',reason}`로 반려합니다. 운영자 `request`에 `memberId`를 포함합니다. 확인은 prepare/commit 단계를 사용하며 이 경로의 직접 `confirmed`는 거부됩니다. |
 
-서버는 회비 원장을 소유하지 않습니다. 확인 금액은 회원이 주장한 요청액과 별도로 운영자가 실제 입금을 확인해 입력합니다. Android는 원장 ID를 한 번 반영하고 검토 ID/owner를 대조해 재시도·복구합니다. 충돌을 자동으로 덮어쓰지 않습니다.
+서버는 회비 원장을 소유하지 않습니다. 확인 금액은 회원이 주장한 요청액과 별도로 운영자가 실제 입금을 확인해 입력합니다. Android는 원장 ID를 한 번 반영하고 검토 ID/owner를 대조해 재시도·복구합니다. 과거 백업 prepare 작업에 회원 ID가 빠졌더라도 기존 작업 ID와 본문을 유지하며, 정확한 요청 ID·pending/reserved 상태와 검토 의도 여섯 값이 일치할 때만 연결 회원을 확인합니다. 충돌을 자동으로 덮어쓰지 않습니다.
 
 ## 오류와 배포
 

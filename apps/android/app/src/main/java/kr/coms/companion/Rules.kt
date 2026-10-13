@@ -17,16 +17,33 @@ fun eligibleMembers(
     entries: List<LedgerEntry>,
     chargeId: String? = null,
     group: String? = null,
+    cohort: String? = null,
+    targetPolicy: String = "all",
+    eventId: String? = null,
+    rsvps: List<Rsvp> = emptyList(),
+    currentSemester: String = "",
+    selectedIds: Set<String> = emptySet(),
+    excludedIds: Set<String> = emptySet(),
 ): List<Member> = members.filter { member ->
     member.status == "활동" && !member.optedOut && validPhone(member.phone) &&
         members.count { normalizePhone(it.phone) == normalizePhone(member.phone) } == 1 &&
         (group == null || member.groupName == group) &&
-        (chargeId == null || balance(chargeId, member.id, entries) > 0)
+        (cohort == null || member.cohort == cohort) && member.id !in excludedIds &&
+        (selectedIds.isEmpty() || member.id in selectedIds) &&
+        (chargeId == null || balance(chargeId, member.id, entries) > 0) &&
+        when (targetPolicy) {
+            "all" -> true
+            "unpaid" -> chargeId != null && balance(chargeId, member.id, entries) > 0
+            "unanswered" -> eventId != null && rsvps.none { it.eventId == eventId && it.memberId == member.id && it.response != "미응답" }
+            "new" -> currentSemester.isNotBlank() && member.semester == currentSemester
+            "selected" -> selectedIds.isNotEmpty() && member.id in selectedIds
+            else -> false
+        }
 }
 
 data class RenderResult(val text: String, val missing: Set<String>)
 
-fun renderTemplate(body: String, member: Member, event: Event? = null, charge: Charge? = null, entries: List<LedgerEntry> = emptyList()): RenderResult {
+fun renderTemplate(body: String, member: Member, event: Event? = null, charge: Charge? = null, entries: List<LedgerEntry> = emptyList(), accountGuide: String = "", responseLink: String = ""): RenderResult {
     val values = mapOf(
         "이름" to member.name,
         "행사명" to (event?.title ?: ""),
@@ -35,6 +52,10 @@ fun renderTemplate(body: String, member: Member, event: Event? = null, charge: C
         "납부항목" to (charge?.title ?: ""),
         "남은금액" to (if (charge == null) "" else "%,d원".format(balance(charge.id, member.id, entries).coerceAtLeast(0))),
         "마감" to (event?.deadline ?: charge?.dueDate ?: ""),
+        "계좌안내" to accountGuide,
+        "계좌 안내" to accountGuide,
+        "응답링크" to responseLink,
+        "응답 링크" to responseLink,
     )
     val missing = mutableSetOf<String>()
     val text = variable.replace(body) { match ->
@@ -57,9 +78,16 @@ fun requireLedgerEntry(kind: String, amountWon: Long, reason: String): Long {
     }
 }
 
-fun publicShareSafe(text: String, members: List<Member>): Boolean =
-    text.isNotBlank() && !text.contains('{') && !text.contains('}') &&
-        !Regex("01[0-9][- 0-9]{8,}").containsMatchIn(text) &&
-        !Regex("[0-9][0-9,]*원").containsMatchIn(text) &&
-        !text.contains("token=", ignoreCase = true) && !text.contains("/respond#", ignoreCase = true) &&
-        members.none { it.name.isNotBlank() && text.contains(it.name) }
+fun publicShareSafe(text: String, members: List<Member>, allowedCommonUrls: Set<String> = emptySet()): Boolean {
+    val urls = Regex("https?://\\S+")
+    val redacted = urls.replace(text) { match ->
+        val url = match.value
+        if (url.startsWith("https://") && "/respond#" in url && url in allowedCommonUrls)
+            "[공통 응답 링크]" else url
+    }
+    return text.isNotBlank() && !redacted.contains('{') && !redacted.contains('}') &&
+        !Regex("01[0-9][- 0-9]{8,}").containsMatchIn(redacted) &&
+        !Regex("[0-9][0-9,]*원").containsMatchIn(redacted) &&
+        !redacted.contains("token=", ignoreCase = true) && !redacted.contains("/respond#", ignoreCase = true) &&
+        members.none { it.name.isNotBlank() && redacted.contains(it.name) }
+}

@@ -44,6 +44,7 @@ COMs_Companion_Development_Kit.zip
 .tmp/
 artifacts/
 *.hprof
+*.comsbak
 *.tsbuildinfo
 playwright-report/
 test-results/

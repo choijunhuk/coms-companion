@@ -21,13 +21,21 @@ class ReminderWorker(context: Context, params: WorkerParameters) : CoroutineWork
     override suspend fun doWork(): Result {
         val id = inputData.getString("reminderId") ?: return Result.failure()
         val dao = AppDatabase.get(applicationContext).dao()
+        val scheduledAt = inputData.getLong("scheduledAt", 0)
+        if (scheduledAt > 0 && System.currentTimeMillis() - scheduledAt > TimeUnit.HOURS.toMillis(24)) {
+            dao.updateReminder(id, "알림 시각 지남 · 앱에서 확인 필요")
+            return Result.success()
+        }
         val manager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= 33 && applicationContext.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             dao.updateReminder(id, "알림 권한 거부 · 앱에서 확인 필요")
             return Result.success()
         }
         manager.createNotificationChannel(NotificationChannel("operator-reminder", "연락 알림", NotificationManager.IMPORTANCE_DEFAULT))
-        val open = PendingIntent.getActivity(applicationContext, id.hashCode(), Intent(applicationContext, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val openIntent = Intent(applicationContext, MainActivity::class.java)
+            .putExtra("draftId", inputData.getString("draftId"))
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        val open = PendingIntent.getActivity(applicationContext, id.hashCode(), openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notification = Notification.Builder(applicationContext, "operator-reminder")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle("COM’s Companion · 연락 확인")
@@ -46,6 +54,6 @@ class ReminderWorker(context: Context, params: WorkerParameters) : CoroutineWork
 fun scheduleReminder(context: Context, reminder: Reminder) {
     val work = OneTimeWorkRequestBuilder<ReminderWorker>()
         .setInitialDelay((reminder.atMillis - System.currentTimeMillis()).coerceAtLeast(0), TimeUnit.MILLISECONDS)
-        .setInputData(workDataOf("reminderId" to reminder.id)).build()
+        .setInputData(workDataOf("reminderId" to reminder.id, "draftId" to reminder.draftId, "scheduledAt" to reminder.atMillis)).build()
     WorkManager.getInstance(context).enqueueUniqueWork(reminder.id, ExistingWorkPolicy.REPLACE, work)
 }

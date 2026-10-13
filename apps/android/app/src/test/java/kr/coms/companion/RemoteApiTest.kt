@@ -10,6 +10,7 @@ class RemoteApiTest {
         assertThrows(IllegalArgumentException::class.java) { checkedBaseUrl("http://example.org", false) }
         assertEquals("http://10.0.2.2:3000", checkedBaseUrl("http://10.0.2.2:3000/", true))
         assertThrows(IllegalArgumentException::class.java) { checkedBaseUrl("http://localhost:3000", true) }
+        assertThrows(IllegalArgumentException::class.java) { checkedBaseUrl("https://example.org/other", false) }
     }
     @Test fun onlyDefinitiveRejectionReleasesPublishOperation() {
         org.junit.Assert.assertTrue(ApiFailure(400, "invalid").definitiveNoSave)
@@ -17,4 +18,5 @@ class RemoteApiTest {
         org.junit.Assert.assertFalse(ApiFailure(500, "uncertain").definitiveNoSave)
         org.junit.Assert.assertFalse(ApiFailure(408, "timeout").definitiveNoSave)
     }
+
 }

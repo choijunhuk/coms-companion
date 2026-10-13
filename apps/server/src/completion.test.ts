@@ -210,6 +210,27 @@ test('member sees the confirmed amount when it differs from the submitted claim'
   for(const key of ['review','reviewId','ownerId','chargeId','ledgerEntryId'])assert.equal(publicClaim[key],undefined,key);
 });
 
+test('prepare and commit receipts identify the same member as the admin snapshot without exposing identity publicly',async t=>{
+  const app=createApp();t.after(()=>app.close());const e=event();await create(app,e);const c=await claim(app,e.id),body=intent();
+  const memberId=(await snapshot(app,e.id)).json().paymentRequests[0].memberId;
+  const prepared=await review(app,e.id,c.id,body,'prepare');assert.equal(prepared.statusCode,200,prepared.body);
+  assert.equal(prepared.json().request.memberId,memberId);
+  const committed=await review(app,e.id,c.id,{operationId:randomUUID(),reviewId:body.reviewId,ledgerEntryId:body.ledgerEntryId},'commit');
+  assert.equal(committed.statusCode,200,committed.body);assert.equal(committed.json().request.memberId,memberId);
+  const publicClaim=(await appSafeContext(app,c.token)).paymentRequests[0] as Record<string,unknown>;
+  for(const key of ['memberId','review','reviewId','ownerId','chargeId','ledgerEntryId'])assert.equal(publicClaim[key],undefined,key);
+});
+
+test('rejection receipt identifies the member while the public claim reveals only rejected status',async t=>{
+  const app=createApp();t.after(()=>app.close());const e=event();await create(app,e);const c=await claim(app,e.id);
+  const memberId=(await snapshot(app,e.id)).json().paymentRequests[0].memberId;
+  const rejected=await app.inject({method:'POST',url:`/api/admin/events/${e.id}/payments/${c.id}/review`,headers:auth,payload:{operationId:randomUUID(),status:'rejected',reason:'가상 확인 불일치'}});
+  assert.equal(rejected.statusCode,200,rejected.body);assert.equal(rejected.json().request.memberId,memberId);
+  const publicClaim=(await appSafeContext(app,c.token)).paymentRequests[0] as Record<string,unknown>;
+  assert.equal(publicClaim.status,'rejected');
+  for(const key of ['memberId','review','reviewId','ownerId','chargeId','ledgerEntryId'])assert.equal(publicClaim[key],undefined,key);
+});
+
 test('reserved claim cannot be rejected through the legacy review endpoint',async t=>{
   const app=createApp();t.after(()=>app.close());const e=event();await create(app,e);const c=await claim(app,e.id),body=intent();await review(app,e.id,c.id,body,'prepare');
   const reject=await app.inject({method:'POST',url:`/api/admin/events/${e.id}/payments/${c.id}/review`,headers:auth,payload:{operationId:randomUUID(),status:'rejected',reason:'가상 반려'}});

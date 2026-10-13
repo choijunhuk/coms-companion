@@ -262,7 +262,7 @@ export function buildApp(options:Options) {
     if(status==='confirmed')throw new ApiError(409,'REVIEW_PREPARE_REQUIRED','납부 원장 연결을 먼저 예약한 뒤 확인을 완료해 주세요.');
     if(ledgerId&&store.row('SELECT id FROM payments WHERE ledger_entry_id=?',ledgerId))throw new ApiError(409,'CONFLICT','이 납부 기록은 다른 요청과 연결됐어요.');
     const value={...previous,status:status as Payment['status'],reviewReason:string(body.reason??'운영자 반려','사유',500)};
-    store.run('UPDATE payments SET payload=?,ledger_entry_id=? WHERE id=?',JSON.stringify(value),ledgerId,id);store.audit('admin','review-payment',id,previous,value,now().toISOString());store.change(e.id,'payment',id,String(row.member_id),value);return {request:value};
+    store.run('UPDATE payments SET payload=?,ledger_entry_id=? WHERE id=?',JSON.stringify(value),ledgerId,id);store.audit('admin','review-payment',id,previous,value,now().toISOString());store.change(e.id,'payment',id,String(row.member_id),value);return {request:{...value,memberId:String(row.member_id)}};
   }));
   app.post<{Params:{id:string;requestId:string}}>('/api/admin/events/:id/payments/:requestId/review/prepare',adminOnly,(req)=>op(req,'admin',()=>{
     const eventId=uuid(req.params.id),id=uuid(req.params.requestId),body=object(req.body);getEvent(eventId);
@@ -272,14 +272,14 @@ export function buildApp(options:Options) {
     const previous=parse<ReviewedPayment>(row);
     if(previous.review){
       const r=previous.review;
-      if(r.reviewId===proposed.reviewId&&r.ledgerEntryId===proposed.ledgerEntryId&&r.chargeId===proposed.chargeId&&r.confirmedAmount===proposed.confirmedAmount&&r.ownerId===proposed.ownerId&&r.reason===proposed.reason)return {review:r,request:previous};
+      if(r.reviewId===proposed.reviewId&&r.ledgerEntryId===proposed.ledgerEntryId&&r.chargeId===proposed.chargeId&&r.confirmedAmount===proposed.confirmedAmount&&r.ownerId===proposed.ownerId&&r.reason===proposed.reason)return {review:r,request:{...previous,memberId:String(row.member_id)}};
       throw new ApiError(409,'REVIEW_CONFLICT','다른 검토가 먼저 예약되거나 완료됐어요. 원장을 중복 반영할 수 없어요.',previous);
     }
     if(previous.status!=='pending')throw new ApiError(409,'REVIEW_CONFLICT','이미 검토한 요청이에요.',previous);
     if(store.row('SELECT id FROM payments WHERE ledger_entry_id=?',proposed.ledgerEntryId))throw new ApiError(409,'REVIEW_CONFLICT','이 원장 기록은 다른 요청과 연결돼 있어요.');
     const value={...previous,review:proposed};
     store.run('UPDATE payments SET payload=?,ledger_entry_id=? WHERE id=?',JSON.stringify(value),proposed.ledgerEntryId,id);
-    store.audit('admin','prepare-payment-review',id,previous,value,now().toISOString());store.change(eventId,'payment',id,String(row.member_id),value);return {review:proposed,request:value};
+    store.audit('admin','prepare-payment-review',id,previous,value,now().toISOString());store.change(eventId,'payment',id,String(row.member_id),value);return {review:proposed,request:{...value,memberId:String(row.member_id)}};
   }));
   app.post<{Params:{id:string;requestId:string}}>('/api/admin/events/:id/payments/:requestId/review/commit',adminOnly,(req)=>op(req,'admin',()=>{
     const eventId=uuid(req.params.id),id=uuid(req.params.requestId),body=object(req.body);getEvent(eventId);
@@ -287,10 +287,10 @@ export function buildApp(options:Options) {
     if(!row)throw new ApiError(404,'INVALID_REQUEST','입금 확인 요청을 찾을 수 없어요.');
     const previous=parse<ReviewedPayment>(row),r=previous.review;
     if(!r||r.reviewId!==reviewId||r.ledgerEntryId!==ledgerEntryId)throw new ApiError(409,'REVIEW_CONFLICT','예약한 원장 연결과 달라요. 다시 비교해 주세요.',previous);
-    if(previous.status==='confirmed')return {review:r,request:previous};
+    if(previous.status==='confirmed')return {review:r,request:{...previous,memberId:String(row.member_id)}};
     if(previous.status!=='pending')throw new ApiError(409,'REVIEW_CONFLICT','검토 상태가 변경됐어요.',previous);
     const review={...r,state:'confirmed' as const},value={...previous,status:'confirmed' as const,review};
-    store.run('UPDATE payments SET payload=? WHERE id=?',JSON.stringify(value),id);store.audit('admin','commit-payment-review',id,previous,value,now().toISOString());store.change(eventId,'payment',id,String(row.member_id),value);return {review,request:value};
+    store.run('UPDATE payments SET payload=? WHERE id=?',JSON.stringify(value),id);store.audit('admin','commit-payment-review',id,previous,value,now().toISOString());store.change(eventId,'payment',id,String(row.member_id),value);return {review,request:{...value,memberId:String(row.member_id)}};
   }));
 
   if(options.webDist){
