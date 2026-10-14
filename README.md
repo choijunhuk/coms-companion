@@ -42,7 +42,7 @@ npm start
 
 기본 주소는 `http://localhost:3000`이며 빌드된 회원 웹과 API를 함께 제공합니다. 개발 서버는 `npm run dev`, 웹만 실행할 때는 `npm run dev:web`을 사용합니다. 에뮬레이터에서 로컬 서버에 연결할 때 Android 주소는 `http://10.0.2.2:3000`입니다.
 
-공개 배포 대상은 `https://coms.kw.ac.kr/companion/`입니다. 웹 빌드의 `PUBLIC_BASE_URL`과 서버의 같은 설정, 앱의 서버 주소를 이 경로에 맞춥니다. 기존 COMS 서버의 독립된 응답 서비스와 읽기 전용 회원 명부 연결 방법은 [DEPLOYMENT](docs/DEPLOYMENT.md)를 확인하세요. 실제 배포·기기 수용 결과는 [STATUS](docs/STATUS.md)에 기록합니다.
+공개 응답 웹·API는 [coms.kw.ac.kr/companion/](https://coms.kw.ac.kr/companion/)에서 운영합니다. 회원은 운영자가 발급한 행사별 응답 링크로 접속합니다. 기존 COMS 서버의 독립된 응답 서비스와 읽기 전용 회원 명부 연결 방법은 [DEPLOYMENT](docs/DEPLOYMENT.md)를 확인하세요. 웹의 저장·수정·재접속은 확인했으며 새 연동 APK의 휴대폰 설치·명부 적용은 사용자가 기기 연결을 나중에 하기로 하여 미실행입니다. 상세 증거는 [STATUS](docs/STATUS.md)에 있습니다.
 
 ## Kakao 설정
 
