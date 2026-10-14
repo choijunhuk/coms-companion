@@ -14,9 +14,13 @@ export type PendingOperation =
   | { kind: 'response'; payload: Record<string, unknown>; draft: Draft }
   | { kind: 'payment'; payload: Record<string, unknown>; draft: PaymentDraft };
 
-export async function pendingKey(token: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+export async function pendingKey(token: string, memberId = ''): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(memberId ? `${token}\0coms:${memberId}` : token));
   return `coms-pending:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+}
+
+export function comsAuthUrl(page: 'login' | 'signup', responsePath: string, token: string): string {
+  return `/${page}?returnTo=${encodeURIComponent(responsePath)}#${encodeURIComponent(token)}`;
 }
 
 export function readPending(storage: Pick<Storage, 'getItem'>, key: string): PendingOperation | null {

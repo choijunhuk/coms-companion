@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Draft, PaymentDraft, Rsvp, PendingOperation } from './draft';
-import { keepOperation, nextOperation, paymentError, pendingKey, readPending, responseError } from './draft';
+import { comsAuthUrl, keepOperation, nextOperation, paymentError, pendingKey, readPending, responseError } from './draft';
+import { apiRequest, type ApiError } from './api';
 
 type EventView = {
   id: string; clubName: string; title: string; startsAt: string | null; location: string;
@@ -14,11 +15,10 @@ type Submission = {
 type PaymentRequest = { id: string; amount: number; confirmedAmount?: number; depositorName: string; depositedAt: string; status: 'pending' | 'confirmed' | 'rejected'; createdAt: string };
 type Context = {
   event: EventView;
-  access: { kind: 'common' | 'personal' | 'submission'; state: 'open' | 'closed' | 'cancelled' | 'expired' | 'revoked'; scopes: ('rsvp' | 'notice' | 'vote' | 'payment')[]; canPay: boolean; message: string };
+  access: { kind: 'common' | 'personal' | 'submission'; state: 'open' | 'closed' | 'cancelled' | 'expired' | 'revoked'; scopes: ('rsvp' | 'notice' | 'vote' | 'payment')[]; canPay: boolean; message: string; identity?: { provider: 'coms'; name: string; memberId: string } };
   submission: Submission | null; paymentRequests: PaymentRequest[];
 };
 type Step = 'detail' | 'edit' | 'review' | 'done' | 'payment' | 'paymentReview' | 'paymentDone';
-type ApiError = Error & { code?: string; status?: number };
 
 const initialDraft: Draft = { name: '', rsvp: 'undecided', noticeAcknowledged: false, selectedOptions: [] };
 const initialPayment: PaymentDraft = { amount: '', depositorName: '', depositedAt: '' };
@@ -44,6 +44,7 @@ function App() {
   const [draft, setDraft] = useState<Draft>(initialDraft);
   const [payment, setPayment] = useState<PaymentDraft>(initialPayment);
   const [error, setError] = useState('');
+  const [authError, setAuthError] = useState('');
   const [saving, setSaving] = useState(false);
   const [uncertainResponse, setUncertainResponse] = useState(false);
   const [uncertainPayment, setUncertainPayment] = useState(false);
@@ -53,82 +54,102 @@ function App() {
   const responsePayload = useRef<Record<string, unknown> | null>(null);
   const paymentPayload = useRef<Record<string, unknown> | null>(null);
   const storageKey = useRef<string | null>(null);
+  const boundMember = useRef<string | null>(null);
+  const refreshGeneration = useRef(0);
   const errorRef = useRef<HTMLDivElement>(null);
 
   async function request<T>(path: string, payload?: object): Promise<T> {
-    const response = await fetch(`${import.meta.env.BASE_URL.replace(/\/$/, '')}${path}`, {
-      method: payload ? 'POST' : 'GET',
-      headers: { Authorization: `Bearer ${token}`, ...(payload ? { 'Content-Type': 'application/json' } : {}) },
-      body: payload ? JSON.stringify(payload) : undefined,
-      cache: 'no-store',
-    });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const failure = new Error(result.error?.message || '요청을 처리하지 못했어요.') as ApiError;
-      failure.code = result.error?.code;
-      failure.status = response.status;
-      throw failure;
-    }
-    return result as T;
+    return apiRequest<T>(import.meta.env.BASE_URL, token, path, payload);
   }
 
-  async function refresh(preserveDraft = false) {
+  function resetOperations() {
+    responsePayload.current = null; responseOperation.current = null;
+    paymentPayload.current = null; paymentOperation.current = null;
+    setUncertainResponse(false); setUncertainPayment(false); setSuccess(null); setStep('detail');
+  }
+
+  function restorePending(pending: PendingOperation | null) {
+    if (pending?.kind === 'response') {
+      responsePayload.current = pending.payload;
+      responseOperation.current = pending.payload.operationId as string;
+      setDraft(pending.draft); setUncertainResponse(true); setStep('review');
+    } else if (pending?.kind === 'payment') {
+      paymentPayload.current = pending.payload;
+      paymentOperation.current = pending.payload.operationId as string;
+      setPayment(pending.draft); setUncertainPayment(true); setStep('paymentReview');
+    }
+  }
+
+  function requireLogin(failure: ApiError) {
+    if (failure.code === 'MEMBER_REVOKED') {
+      setAuthError(''); setContext(null); setSuccess(null);
+      return;
+    }
+    if (['COMS_LOGIN_REQUIRED', 'COMS_MEMBER_REQUIRED', 'COMS_ACCOUNT_CHANGED'].includes(failure.code ?? '')) {
+      setAuthError(failure.code!); setContext(null); setSuccess(null);
+    }
+  }
+
+  async function refresh(preserveDraft = false, initialize = false) {
     if (!token) { setError('응답 링크가 없어요. 운영자에게 새 링크를 요청해 주세요.'); setLoading(false); return; }
+    const generation = ++refreshGeneration.current;
     setLoading(true);
     try {
       const next = await request<Context>('/api/respond');
+      const memberId = next.access.identity?.memberId ?? '';
+      let key: string | null = null;
+      try { key = await pendingKey(token, memberId); } catch { /* In-memory retry remains active. */ }
+      if (generation !== refreshGeneration.current) return;
+      const firstBinding = boundMember.current === null;
+      const accountChanged = boundMember.current !== null && boundMember.current !== memberId;
+      if (accountChanged) resetOperations();
+      boundMember.current = memberId;
+      storageKey.current = key;
+      let pending: PendingOperation | null = null;
+      if ((initialize || firstBinding || accountChanged) && key) {
+        try { pending = readPending(sessionStorage, key); } catch { /* Browser storage may be blocked. */ }
+      }
       setContext(next);
-      if (!preserveDraft) setDraft(next.submission ? {
-        name: next.submission.name, rsvp: next.submission.rsvp,
+      if ((!preserveDraft || accountChanged) && !pending) setDraft(next.submission ? {
+        name: next.access.identity?.name ?? next.submission.name, rsvp: next.submission.rsvp,
         noticeAcknowledged: (next.submission.eventVersion === next.event.version || !next.access.scopes.includes('notice')) && next.submission.noticeAcknowledged,
         selectedOptions: next.submission.selectedOptions,
-      } : { ...initialDraft });
+      } : { ...initialDraft, name: next.access.identity?.name ?? '' });
       else if (next.submission && next.submission.eventVersion !== next.event.version && next.access.scopes.includes('notice') && !responsePayload.current) {
         setDraft((previous) => ({ ...previous, noticeAcknowledged: false }));
       }
+      restorePending(pending);
+      if (next.access.identity) setDraft((previous) => ({ ...previous, name: next.access.identity!.name }));
+      setAuthError('');
       setError('');
     } catch (cause) {
+      if (generation !== refreshGeneration.current) return;
+      const failure = cause as ApiError;
+      requireLogin(failure);
+      if (initialize && !failure.code?.startsWith('COMS_')) {
+        try {
+          const key = await pendingKey(token);
+          if (generation !== refreshGeneration.current) return;
+          const pending = readPending(sessionStorage, key);
+          if (pending && !pending.payload.identityMemberId) { storageKey.current = key; restorePending(pending); }
+        } catch { /* The original request remains available in memory if storage is blocked. */ }
+      }
       setError(cause instanceof Error ? cause.message : '연결할 수 없어요. 다시 시도해 주세요.');
-    } finally { setLoading(false); }
+    } finally { if (generation === refreshGeneration.current) setLoading(false); }
   }
 
   useEffect(() => {
-    let cancelled = false;
     storageKey.current = null;
-    async function initialize() {
-      let pending: PendingOperation | null = null;
-      try {
-        const key = await pendingKey(token);
-        if (cancelled) return;
-        storageKey.current = key;
-        pending = readPending(sessionStorage, key);
-      } catch { /* Session storage may be unavailable; in-memory retry remains active. */ }
-      if (cancelled) return;
-      if (pending?.kind === 'response') {
-        responsePayload.current = pending.payload;
-        responseOperation.current = pending.payload.operationId as string;
-        setDraft(pending.draft);
-        setUncertainResponse(true);
-        setStep('review');
-      } else if (pending?.kind === 'payment') {
-        paymentPayload.current = pending.payload;
-        paymentOperation.current = pending.payload.operationId as string;
-        setPayment(pending.draft);
-        setUncertainPayment(true);
-        setStep('paymentReview');
-      }
-      void refresh(!!pending);
-    }
-    void initialize();
-    return () => { cancelled = true; };
+    void refresh(false, true);
+    return () => { refreshGeneration.current++; };
   }, [token]);
   useEffect(() => { if (error) errorRef.current?.focus(); }, [error]);
 
   function savePending(pending: PendingOperation) {
     try { if (storageKey.current) sessionStorage.setItem(storageKey.current, JSON.stringify(pending)); } catch { /* In-memory retry still works. */ }
   }
-  function clearPending() {
-    try { if (storageKey.current) sessionStorage.removeItem(storageKey.current); } catch { /* In-memory state is cleared below. */ }
+  function clearPending(key = storageKey.current) {
+    try { if (key) sessionStorage.removeItem(key); } catch { /* In-memory state is cleared below. */ }
   }
 
   function changeDraft(next: Draft) { if (uncertainResponse) return; setDraft(next); responseOperation.current = null; responsePayload.current = null; setError(''); }
@@ -145,25 +166,31 @@ function App() {
         operationId: responseOperation.current, expectedVersion: context.submission?.version ?? 0,
         eventVersion: context.event.version, name: draft.name.trim(), rsvp: draft.rsvp,
         noticeAcknowledged: draft.noticeAcknowledged, selectedOptions: draft.selectedOptions,
+        ...(context.access.identity ? { identityMemberId: context.access.identity.memberId } : {}),
       };
     }
     savePending({ kind: 'response', payload: responsePayload.current, draft });
+    const attemptKey = storageKey.current, attemptMember = boundMember.current, attemptGeneration = refreshGeneration.current;
+    const active = () => attemptKey === storageKey.current && attemptMember === boundMember.current && attemptGeneration === refreshGeneration.current;
     setSaving(true); setError('');
     try {
       const result = await request<{ submission: Submission; editToken?: string }>('/api/respond', responsePayload.current!);
+      clearPending(attemptKey);
+      if (!active()) return;
       setSuccess(result.submission);
       if (context) setContext({ ...context, submission: result.submission });
       responseOperation.current = null;
       responsePayload.current = null;
       setUncertainResponse(false);
-      clearPending();
       if (result.editToken) {
         history.replaceState(null, '', `${import.meta.env.BASE_URL}respond#${encodeURIComponent(result.editToken)}`);
         setToken(result.editToken);
       } else if (!context) void refresh(true);
       setStep('done');
     } catch (cause) {
+      if (!active()) return;
       const failure = cause as ApiError;
+      requireLogin(failure);
       const uncertain = keepOperation(failure.status, uncertainResponse);
       setUncertainResponse(uncertain);
       if (!uncertain) { responseOperation.current = null; responsePayload.current = null; clearPending(); }
@@ -187,18 +214,22 @@ function App() {
       };
     }
     savePending({ kind: 'payment', payload: paymentPayload.current, draft: payment });
+    const attemptKey = storageKey.current, attemptMember = boundMember.current, attemptGeneration = refreshGeneration.current;
+    const active = () => attemptKey === storageKey.current && attemptMember === boundMember.current && attemptGeneration === refreshGeneration.current;
     setSaving(true); setError('');
     try {
       const result = await request<{ request: PaymentRequest }>('/api/respond/payments', paymentPayload.current!);
+      clearPending(attemptKey);
+      if (!active()) return;
       setSuccess(result.request);
       if (context) setContext({ ...context, paymentRequests: [result.request, ...context.paymentRequests] });
       else void refresh(true);
       paymentOperation.current = null;
       paymentPayload.current = null;
       setUncertainPayment(false);
-      clearPending();
       setStep('paymentDone');
     } catch (cause) {
+      if (!active()) return;
       const failure = cause as ApiError;
       const uncertain = keepOperation(failure.status, uncertainPayment);
       setUncertainPayment(uncertain);
@@ -219,6 +250,9 @@ function App() {
   const amount = new Intl.NumberFormat('ko-KR');
   const optionLabel = (id: string) => event?.pollOptions.find((option) => option.id === id)?.label ?? '삭제된 이전 후보';
   const optionLabels = (ids: string[]) => ids.map(optionLabel).join(', ') || '선택 없음';
+  const authRequired = ['COMS_LOGIN_REQUIRED', 'COMS_MEMBER_REQUIRED', 'COMS_ACCOUNT_CHANGED'].includes(authError);
+  const loginUrl = comsAuthUrl('login', `${import.meta.env.BASE_URL}respond`, token);
+  const signupUrl = comsAuthUrl('signup', `${import.meta.env.BASE_URL}respond`, token);
 
   return <main className="shell">
     <header className="brand">COM’s Companion <span>회원 응답</span></header>
@@ -226,14 +260,19 @@ function App() {
     {error ? <div className="alert" role="alert" tabIndex={-1} ref={errorRef}>⚠ {error}
       <button type="button" className="text-button" onClick={() => void refresh(!!context || uncertainResponse || uncertainPayment)}>다시 읽기</button>
     </div> : null}
-    {!context && !loading ? <button type="button" onClick={() => void refresh(uncertainResponse || uncertainPayment)}>다시 시도</button> : null}
-    {uncertainResponse && <section className="card" role="status"><h2>응답 저장 결과 미확인</h2><p>입력은 그대로 보관했어요. 원래 요청으로 다시 확인한 뒤에 수정할 수 있어요.</p><button type="button" disabled={saving} onClick={() => void submitResponse()}>{saving ? '확인 중…' : '원래 응답 다시 확인'}</button></section>}
-    {uncertainPayment && <section className="card" role="status"><h2>입금 요청 저장 결과 미확인</h2><p>입력은 그대로 보관했어요. 원래 요청으로 다시 확인한 뒤에 수정할 수 있어요.</p><button type="button" disabled={saving} onClick={() => void submitPayment()}>{saving ? '확인 중…' : '원래 입금 요청 다시 확인'}</button></section>}
+    {authRequired && <section className="card"><h2>{authError === 'COMS_LOGIN_REQUIRED' ? 'COMS 계정으로 응답하기' : authError === 'COMS_ACCOUNT_CHANGED' ? '로그인 계정이 바뀌었어요' : '등록 회원 확인이 필요해요'}</h2>
+      {authError === 'COMS_LOGIN_REQUIRED' ? <><p>COMS 계정으로 로그인하면 등록된 회원으로 확인돼요. 로그인 후 이 행사로 돌아와 응답할 수 있어요.</p><p className="muted">로그인만으로 응답이 제출되지는 않아요.</p><button type="button" onClick={() => location.assign(loginUrl)}>COMS 로그인</button><p><a href={signupUrl}>계정이 없나요? COMS 회원가입</a></p></>
+        : <><p>{authError === 'COMS_ACCOUNT_CHANGED' ? '다시 읽기를 눌러 현재 로그인한 회원을 확인한 뒤 응답해 주세요.' : 'COMS 가입 계정과 등록 명부의 연결을 운영자에게 확인해 주세요.'}</p><button type="button" onClick={() => void refresh(false, true)}>현재 회원 다시 확인</button></>}
+    </section>}
+    {!context && !loading && !authRequired ? <button type="button" onClick={() => void refresh(uncertainResponse || uncertainPayment)}>다시 시도</button> : null}
+    {uncertainResponse && !authRequired && <section className="card" role="status"><h2>응답 저장 결과 미확인</h2><p>입력은 그대로 보관했어요. 원래 요청으로 다시 확인한 뒤에 수정할 수 있어요.</p><button type="button" disabled={saving} onClick={() => void submitResponse()}>{saving ? '확인 중…' : '원래 응답 다시 확인'}</button></section>}
+    {uncertainPayment && !authRequired && <section className="card" role="status"><h2>입금 요청 저장 결과 미확인</h2><p>입력은 그대로 보관했어요. 원래 요청으로 다시 확인한 뒤에 수정할 수 있어요.</p><button type="button" disabled={saving} onClick={() => void submitPayment()}>{saving ? '확인 중…' : '원래 입금 요청 다시 확인'}</button></section>}
     {!event && step === 'done' && success && 'rsvp' in success && <section className="card" role="status"><h2>응답을 저장했어요</h2><p>저장 시각 {displayDate(success.updatedAt)}</p></section>}
     {!event && step === 'paymentDone' && success && 'amount' in success && <section className="card" role="status"><h2>입금 확인을 요청했어요</h2><p>{amount.format(success.amount)}원 · 운영자 확인 대기</p></section>}
     {event && <>
       <p className="eyebrow">{event.clubName}</p>
       <h1>{event.title}</h1>
+      {access?.identity && <p className="muted">COMS 회원 확인 완료 · {access.identity.name}님으로 응답해요.</p>}
       <section className="card facts" aria-label="행사 정보">
         <div><span>일시</span><strong>{displayDate(event.startsAt)}</strong></div>
         <div><span>장소</span><strong>{event.location || '미정'}</strong></div>
@@ -254,14 +293,14 @@ function App() {
         <p className="step">{step === 'edit' ? '1 · 응답 입력' : '2 · 최종 확인'}</p>
         {step === 'edit' ? <section className="card form">
           <h2>응답 입력</h2>
-          <label>이름 <input value={draft.name} maxLength={100} autoComplete="name" onChange={(e) => changeDraft({ ...draft, name: e.target.value })} required /></label>
+          <label>이름 <input value={draft.name} maxLength={100} autoComplete="name" readOnly={!!access?.identity} onChange={(e) => changeDraft({ ...draft, name: e.target.value })} required /></label>
           {access?.scopes.includes('rsvp') && <fieldset><legend>참석 여부</legend>{(['attending', 'declined', 'undecided'] as const).map((value) => <label className="choice" key={value}><input type="radio" name="rsvp" checked={draft.rsvp === value} onChange={() => changeDraft({ ...draft, rsvp: value })} />{rsvpLabels[value]}</label>)}</fieldset>}
           {access?.scopes.includes('notice') && <label className="choice"><input type="checkbox" checked={draft.noticeAcknowledged} onChange={(e) => changeDraft({ ...draft, noticeAcknowledged: e.target.checked })} />안내사항을 확인했어요</label>}
           {access?.scopes.includes('vote') && (event.pollOptions.length > 0 || draft.selectedOptions.length > 0) && <fieldset disabled={!pollOpen}><legend>가능한 일정 (복수 선택)</legend>{event.pollOptions.map((option) => <label className="choice" key={option.id}><input type="checkbox" checked={draft.selectedOptions.includes(option.id)} onChange={(e) => changeDraft({ ...draft, selectedOptions: e.target.checked ? [...draft.selectedOptions, option.id] : draft.selectedOptions.filter((id) => id !== option.id) })} />{option.label}</label>)}{draft.selectedOptions.filter((id) => !event.pollOptions.some((option) => option.id === id)).map((id) => <label className="choice" key={id}><input type="checkbox" checked onChange={() => changeDraft({ ...draft, selectedOptions: draft.selectedOptions.filter((choice) => choice !== id) })} />삭제된 이전 후보</label>)}{!pollOpen && <p className="muted">투표가 종료되어 기존 선택을 유지해요.</p>}</fieldset>}
           <button type="button" onClick={() => { const invalid = responseError(draft, event.pollOptions.map((option) => option.id), context?.submission?.selectedOptions, staleResponse && !!access?.scopes.includes('notice')); invalid ? setError(invalid) : (setError(''), setStep('review')); }}>입력 내용 확인</button>
-        </section> : <section className="card"><h2>제출할 내용</h2><p>이름: {draft.name}</p>{access?.scopes.includes('rsvp') && <p>참석: {rsvpLabels[draft.rsvp]}</p>}{access?.scopes.includes('notice') && <p>안내: {draft.noticeAcknowledged ? '확인함' : '확인하지 않음'}</p>}{access?.scopes.includes('vote') && (event.pollOptions.length > 0 || draft.selectedOptions.length > 0) && <p>가능 일정: {optionLabels(draft.selectedOptions)}</p>}<p className="muted">{access?.kind === 'common' ? '운영자가 확인할 때까지 미확인 응답으로 저장돼요.' : '제출 후 저장 결과를 확인해 주세요.'}</p><div className="actions"><button type="button" disabled={saving} onClick={() => void submitResponse()}>{saving ? '저장 중…' : '응답 제출'}</button><button type="button" className="secondary" disabled={saving} onClick={() => setStep('edit')}>수정</button></div></section>}
+        </section> : <section className="card"><h2>제출할 내용</h2><p>이름: {draft.name}</p>{access?.scopes.includes('rsvp') && <p>참석: {rsvpLabels[draft.rsvp]}</p>}{access?.scopes.includes('notice') && <p>안내: {draft.noticeAcknowledged ? '확인함' : '확인하지 않음'}</p>}{access?.scopes.includes('vote') && (event.pollOptions.length > 0 || draft.selectedOptions.length > 0) && <p>가능 일정: {optionLabels(draft.selectedOptions)}</p>}<p className="muted">{access?.identity ? 'COMS 회원으로 확인되어 앱의 해당 회원에 연결돼요.' : access?.kind === 'common' ? '운영자가 확인할 때까지 미확인 응답으로 저장돼요.' : '제출 후 저장 결과를 확인해 주세요.'}</p><div className="actions"><button type="button" disabled={saving} onClick={() => void submitResponse()}>{saving ? '저장 중…' : '응답 제출'}</button><button type="button" className="secondary" disabled={saving} onClick={() => setStep('edit')}>수정</button></div></section>}
       </>}
-      {step === 'done' && success && 'rsvp' in success && <section className="card" role="status"><h2>응답을 저장했어요</h2>{access?.scopes.includes('rsvp') && <p>{rsvpLabels[success.rsvp]}</p>}{access?.scopes.includes('notice') && <p>{success.noticeAcknowledged ? '안내 확인함' : '안내 미확인'}</p>}{access?.scopes.includes('vote') && (event.pollOptions.length > 0 || success.selectedOptions.length > 0) && <p>선택한 일정: {optionLabels(success.selectedOptions)}</p>}<p>{success.verification === 'pending' ? '운영자 확인 대기' : '회원 연결됨'}</p><p className="muted">저장 시각 {displayDate(success.updatedAt)}</p>{access?.scopes.includes('vote') && event.pollDeadline && <p className="muted">투표 수정 기한 {displayDate(event.pollDeadline)}</p>}{open && <p className="muted">마감 전 이 주소로 다시 열어 수정할 수 있어요. 링크를 다른 사람에게 보내지 마세요.</p>}{open && canEditResponse && <button type="button" onClick={() => setStep('edit')}>응답 수정</button>}</section>}
+      {step === 'done' && success && 'rsvp' in success && <section className="card" role="status"><h2>응답을 저장했어요</h2>{access?.scopes.includes('rsvp') && <p>{rsvpLabels[success.rsvp]}</p>}{access?.scopes.includes('notice') && <p>{success.noticeAcknowledged ? '안내 확인함' : '안내 미확인'}</p>}{access?.scopes.includes('vote') && (event.pollOptions.length > 0 || success.selectedOptions.length > 0) && <p>선택한 일정: {optionLabels(success.selectedOptions)}</p>}<p>{success.verification === 'pending' ? '운영자 확인 대기' : '회원 연결됨'}</p><p className="muted">저장 시각 {displayDate(success.updatedAt)}</p>{access?.scopes.includes('vote') && event.pollDeadline && <p className="muted">투표 수정 기한 {displayDate(event.pollDeadline)}</p>}{open && <p className="muted">{access?.identity ? '마감 전 같은 행사 링크에서 COMS 로그인 후 수정할 수 있어요.' : '마감 전 이 주소로 다시 열어 수정할 수 있어요. 링크를 다른 사람에게 보내지 마세요.'}</p>}{open && canEditResponse && <button type="button" onClick={() => setStep('edit')}>응답 수정</button>}</section>}
       {(step === 'payment' || step === 'paymentReview') && open && access?.canPay && !uncertainPayment && <>
         <p className="step">{step === 'payment' ? '1 · 입금 내용 입력' : '2 · 입금 확인 요청 검토'}</p>
         {step === 'payment' ? <section className="card form"><h2>입금 확인 요청</h2><p className="muted">운영자가 실제 입금 내역을 확인한 뒤 납부를 확정해요.</p><label>금액 (원)<input type="number" min="1" step="1" inputMode="numeric" value={payment.amount} onChange={(e) => changePayment({ ...payment, amount: e.target.value })} /></label><label>입금자명<input maxLength={100} value={payment.depositorName} onChange={(e) => changePayment({ ...payment, depositorName: e.target.value })} /></label><label>입금 시각 (기기 시간)<input type="datetime-local" value={payment.depositedAt} onChange={(e) => changePayment({ ...payment, depositedAt: e.target.value })} /></label><button type="button" onClick={() => { const invalid = paymentError(payment); invalid ? setError(invalid) : (setError(''), setStep('paymentReview')); }}>입력 내용 확인</button></section>

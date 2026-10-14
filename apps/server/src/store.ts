@@ -37,6 +37,8 @@ export class Store {
         member_id TEXT, payload TEXT NOT NULL, UNIQUE(event_id,member_id));
       CREATE TABLE IF NOT EXISTS payments(id TEXT PRIMARY KEY, event_id TEXT NOT NULL REFERENCES events(id),
         member_id TEXT NOT NULL, payload TEXT NOT NULL, ledger_entry_id TEXT UNIQUE);
+      CREATE TABLE IF NOT EXISTS revoked_members(event_id TEXT NOT NULL REFERENCES events(id),
+        member_id TEXT NOT NULL, revoked_at TEXT NOT NULL, PRIMARY KEY(event_id,member_id));
       CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY, owner TEXT NOT NULL, fingerprint TEXT NOT NULL,
         receipt TEXT NOT NULL, created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY AUTOINCREMENT, actor TEXT NOT NULL,
@@ -54,7 +56,7 @@ export class Store {
         if(parent)this.run("UPDATE links SET parent_link_id=? WHERE token_hash=? AND kind='submission' AND parent_link_id IS NULL",String(parent.id),hash(receipt.editToken));
       }
     });
-    this.db.exec('PRAGMA user_version=3');
+    this.db.exec('PRAGMA user_version=4');
     // Old databases have no change log; seed once without changing their records.
     if(!this.row('SELECT sequence FROM changes LIMIT 1'))this.transaction(()=>{
       for(const row of this.rows('SELECT * FROM events'))this.change(String(row.id),'event',String(row.id),null,JSON.parse(String(row.payload)));

@@ -1,5 +1,5 @@
 import Fastify, {type FastifyRequest} from 'fastify';
-import {randomBytes,randomUUID,timingSafeEqual} from 'node:crypto';
+import {createHash,randomBytes,randomUUID,timingSafeEqual} from 'node:crypto';
 import {readFileSync,statSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {ApiError,Store,hash,type SqlRow} from './store.ts';
@@ -12,18 +12,21 @@ type Review={reviewId:string;ledgerEntryId:string;chargeId:string;confirmedAmoun
 type ReviewedPayment=Payment&{review?:Review;reviewReason?:string};
 type Link=SqlRow&{id:string;event_id:string;kind:'common'|'personal'|'submission';member_id:string|null;submission_id:string|null;expires_at:string;revoked:number;scopes:string};
 type State='open'|'closed'|'cancelled'|'expired'|'revoked';
-type Options={adminToken:string;encryptionKey:string;databasePath:string;publicBaseUrl:string;webDist?:string;now?:()=>Date;rateLimit?:number;trustProxy?:'loopback';rosterPath?:string};
+type Options={adminToken:string;encryptionKey:string;databasePath:string;publicBaseUrl:string;webDist?:string;now?:()=>Date;rateLimit?:number;trustProxy?:'loopback';rosterPath?:string;comsAuthUrl?:string};
 const scopes=['rsvp','notice','vote','payment'];
 const parse=<T>(row:SqlRow):T=>JSON.parse(String(row.payload)) as T;
 const messages:Record<State,string>={open:'응답을 제출하거나 수정할 수 있어요.',closed:'응답 마감이 지나 수정할 수 없어요.',cancelled:'취소된 행사예요.',expired:'링크 유효기간이 지났어요.',revoked:'취소된 초대 링크예요.'};
 const rosterUnavailable=()=>new ApiError(503,'ROSTER_UNAVAILABLE','회원 명부를 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.');
+const comsLoginRequired=()=>new ApiError(401,'COMS_LOGIN_REQUIRED','COMS 로그인이 필요해요.');
+const comsMemberRequired=()=>new ApiError(403,'COMS_MEMBER_REQUIRED','COMS 등록 회원만 응답할 수 있어요.');
+const comsAuthUnavailable=()=>new ApiError(503,'COMS_AUTH_UNAVAILABLE','COMS 로그인을 확인하지 못했어요. 잠시 뒤 다시 시도해 주세요.');
+const fields=(input:unknown,keys:string[]):input is Record<string,unknown>=>
+  !!input&&typeof input==='object'&&!Array.isArray(input)&&Object.keys(input).length===keys.length&&keys.every(key=>Object.hasOwn(input,key));
+const clean=(input:unknown,max:number,required=false):input is string=>
+  typeof input==='string'&&input.length<=max&&(!required||input.trim().length>0)&&!/\p{Cc}/u.test(input);
 
 function parseRoster(raw:string) {
   const value:unknown=JSON.parse(raw);
-  const fields=(input:unknown,keys:string[]):input is Record<string,unknown>=>
-    !!input&&typeof input==='object'&&!Array.isArray(input)&&Object.keys(input).length===keys.length&&keys.every(key=>Object.hasOwn(input,key));
-  const clean=(input:unknown,max:number,required=false):input is string=>
-    typeof input==='string'&&input.length<=max&&(!required||input.trim().length>0)&&!/\p{Cc}/u.test(input);
   if(!fields(value,['source','updatedAt','members'])||value.source!=='coms-eligible-members'||
     typeof value.updatedAt!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.test(value.updatedAt)||
     !Number.isFinite(Date.parse(value.updatedAt))||!Array.isArray(value.members)||value.members.length>5000)throw new Error('Invalid roster snapshot');
@@ -38,6 +41,14 @@ function parseRoster(raw:string) {
     return {sourceId:input.sourceId,studentId:input.studentId,name:input.name,phone:input.phone,generation:input.generation};
   });
   return {source:value.source,updatedAt:value.updatedAt,members};
+}
+
+function rosterMemberId(sourceId:string):string {
+  const bytes=createHash('md5').update(`kr.coms.companion:coms-eligible-members:v1:${sourceId}`,'utf8').digest();
+  bytes[6]=(bytes[6]!&0x0f)|0x30;
+  bytes[8]=(bytes[8]!&0x3f)|0x80;
+  const hex=bytes.toString('hex');
+  return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
 }
 
 function validateEvent(value:unknown):EventView {
@@ -60,6 +71,11 @@ export function buildApp(options:Options) {
     throw new Error('PUBLIC_BASE_URL must be an origin with an optional safe base path, without credentials, query, or fragment.');
   if(base.protocol!=='https:'&&!(base.protocol==='http:'&&['localhost','127.0.0.1','10.0.2.2','[::1]'].includes(base.hostname)))throw new Error('Use HTTPS outside local development.');
   const publicPath=rawPath.replace(/\/$/,'');
+  const comsAuthUrl=options.comsAuthUrl?new URL(options.comsAuthUrl):null;
+  if(comsAuthUrl&&(options.comsAuthUrl!==`${comsAuthUrl.origin}/api/companion/me`||
+    !((comsAuthUrl.protocol==='https:'&&comsAuthUrl.origin===base.origin)||
+      (comsAuthUrl.protocol==='http:'&&['127.0.0.1','[::1]'].includes(comsAuthUrl.hostname)))))
+    throw new Error('COMS_AUTH_URL must be the exact COMS identity endpoint on the public HTTPS origin or loopback HTTP.');
   const store=new Store(options.databasePath,options.encryptionKey),now=options.now??(()=>new Date());
   const app=Fastify({logger:false,bodyLimit:64*1024,trustProxy:options.trustProxy==='loopback'?(address)=>address==='127.0.0.1'||address==='::1':false});
   const limits=new Map<string,{since:number;count:number}>();
@@ -112,9 +128,47 @@ export function buildApp(options:Options) {
     const value=state(link,e);
     if(value==='expired'||value==='revoked')throw new ApiError(value==='expired'?410:403,value.toUpperCase(),messages[value]);
   }
-  function own(link:Link):Submission|null {
-    const row=link.submission_id?store.row('SELECT * FROM submissions WHERE id=? AND event_id=?',link.submission_id,link.event_id):link.member_id?store.row('SELECT * FROM submissions WHERE event_id=? AND member_id=?',link.event_id,link.member_id):undefined;
+  function own(link:Link,memberId?:string):Submission|null {
+    const row=memberId?store.row('SELECT * FROM submissions WHERE event_id=? AND member_id=?',link.event_id,memberId):link.submission_id?store.row('SELECT * FROM submissions WHERE id=? AND event_id=?',link.submission_id,link.event_id):link.member_id?store.row('SELECT * FROM submissions WHERE event_id=? AND member_id=?',link.event_id,link.member_id):undefined;
     return row?parse<Submission>(row):null;
+  }
+  function ensureMemberAllowed(link:Link,memberId:string) {
+    if(store.row('SELECT 1 FROM revoked_members WHERE event_id=? AND member_id=?',link.event_id,memberId))
+      throw new ApiError(403,'MEMBER_REVOKED','이 회원의 행사 응답 권한이 취소됐어요.');
+  }
+  function readRoster() {
+    if(!options.rosterPath)throw rosterUnavailable();
+    try {
+      const stat=statSync(options.rosterPath);
+      if(!stat.isFile()||stat.size>1024*1024)throw new Error('Invalid roster size');
+      const raw=readFileSync(options.rosterPath,'utf8');
+      if(Buffer.byteLength(raw,'utf8')>1024*1024)throw new Error('Invalid roster size');
+      return parseRoster(raw);
+    } catch {throw rosterUnavailable();}
+  }
+  async function comsIdentity(req:FastifyRequest) {
+    const cookies=(req.headers.cookie??'').split(';').map(part=>part.trim()).filter(part=>part.startsWith('token='));
+    if(cookies.length!==1)throw comsLoginRequired();
+    const tokenCookie=cookies[0]!.slice('token='.length);
+    if(!/^[A-Za-z0-9._~-]{1,4096}$/.test(tokenCookie))throw comsLoginRequired();
+    let response:Response;
+    try {
+      response=await fetch(comsAuthUrl!,{method:'GET',headers:{Cookie:`token=${tokenCookie}`},redirect:'error',signal:AbortSignal.timeout(3000)});
+    } catch {throw comsAuthUnavailable();}
+    if(response.status===401)throw comsLoginRequired();
+    if(response.status===403)throw comsMemberRequired();
+    if(!response.ok)throw comsAuthUnavailable();
+    let value:unknown;
+    try {
+      const raw=await response.text();
+      if(Buffer.byteLength(raw,'utf8')>4096)throw new Error('Identity response too large');
+      value=JSON.parse(raw);
+    } catch {throw comsAuthUnavailable();}
+    if(!fields(value,['source','sourceId','name'])||value.source!=='coms-eligible-members'||
+      !clean(value.sourceId,64,true)||!/^(0|[1-9][0-9]*)$/.test(value.sourceId)||
+      !clean(value.name,100,true))throw comsAuthUnavailable();
+    if(!readRoster().members.some(member=>member.sourceId===value.sourceId))throw comsMemberRequired();
+    return {provider:'coms' as const,name:value.name,memberId:rosterMemberId(value.sourceId)};
   }
   function op(req:FastifyRequest,owner:string,fn:()=>unknown) {
     const body=object(req.body);const id=uuid(body.operationId);
@@ -156,34 +210,35 @@ export function buildApp(options:Options) {
   }
 
   app.get('/api/health',()=>({status:'ok',mode:'templates-no-llm'}));
-  app.get('/api/admin/roster',adminOnly,()=>{
-    if(!options.rosterPath)throw rosterUnavailable();
-    try {
-      const stat=statSync(options.rosterPath);
-      if(!stat.isFile()||stat.size>1024*1024)throw new Error('Invalid roster size');
-      const raw=readFileSync(options.rosterPath,'utf8');
-      if(Buffer.byteLength(raw,'utf8')>1024*1024)throw new Error('Invalid roster size');
-      return parseRoster(raw);
-    } catch {throw rosterUnavailable();}
-  });
-  app.get('/api/respond',(req)=>{
-    const link=getLink(req),e=getEvent(link.event_id),accessState=state(link,e);
+  app.get('/api/admin/roster',adminOnly,()=>readRoster());
+  app.get('/api/respond',async(req)=>{
+    const initialLink=getLink(req),identity=initialLink.kind==='common'&&comsAuthUrl?await comsIdentity(req):null;
+    const link=identity?getLink(req):initialLink;
+    if(identity)ensureMemberAllowed(link,identity.memberId);
+    const e=getEvent(link.event_id),accessState=state(link,e);
     const privateReadable=['open','closed'].includes(accessState),allowed=JSON.parse(link.scopes) as string[];
-    return {event:e,access:{kind:link.kind,state:accessState,scopes:allowed,canPay:accessState==='open'&&link.kind==='personal'&&allowed.includes('payment'),message:messages[accessState]},submission:privateReadable?own(link):null,paymentRequests:privateReadable&&link.kind==='personal'&&allowed.includes('payment')?store.rows('SELECT * FROM payments WHERE event_id=? AND member_id=? ORDER BY rowid',e.id,link.member_id).map(r=>{
+    return {event:e,access:{kind:link.kind,state:accessState,scopes:allowed,canPay:accessState==='open'&&link.kind==='personal'&&allowed.includes('payment'),message:messages[accessState],...(identity?{identity}:{})},submission:privateReadable?own(link,identity?.memberId):null,paymentRequests:privateReadable&&link.kind==='personal'&&allowed.includes('payment')?store.rows('SELECT * FROM payments WHERE event_id=? AND member_id=? ORDER BY rowid',e.id,link.member_id).map(r=>{
       const p=parse<ReviewedPayment>(r);return {id:p.id,amount:p.amount,depositorName:p.depositorName,depositedAt:p.depositedAt,status:p.status,createdAt:p.createdAt,...(p.status==='confirmed'&&p.review?.state==='confirmed'?{confirmedAmount:p.review.confirmedAmount}:{})};
     }):[]};
   });
-  app.post('/api/respond',(req)=>{
+  app.post('/api/respond',async(req)=>{
+    const initialLink=getLink(req),identity=initialLink.kind==='common'&&comsAuthUrl?await comsIdentity(req):null;
+    if(identity&&object(req.body).identityMemberId!==identity.memberId)
+      throw new ApiError(409,'COMS_ACCOUNT_CHANGED','COMS 로그인 계정이 변경됐어요. 응답을 다시 확인해 주세요.');
     const link=getLink(req),e=getEvent(link.event_id);ensureLive(link,e);
-    return op(req,String(link.token_hash),()=>{
-      ensureOpen(link,e);
-      const current=own(link),allowed=JSON.parse(link.scopes) as string[];
+    if(identity)ensureMemberAllowed(link,identity.memberId);
+    return op(req,identity?`${link.token_hash}:${identity.memberId}`:String(link.token_hash),()=>{
+      const liveLink=getLink(req),liveEvent=getEvent(liveLink.event_id);ensureLive(liveLink,liveEvent);
+      if(identity)ensureMemberAllowed(liveLink,identity.memberId);
+      ensureOpen(liveLink,liveEvent);
+      const current=own(liveLink,identity?.memberId),allowed=JSON.parse(liveLink.scopes) as string[];
       if(!allowed.some(v=>['rsvp','notice','vote'].includes(v)))throw new ApiError(403,'SCOPE','이 링크는 입금 확인 요청만 허용해요.');
-      const memberId=link.member_id??(current?store.row('SELECT member_id FROM submissions WHERE id=?',current.id)?.member_id as string|null:null);
-      const value=answer(object(req.body),e,current,allowed,memberId?'linked':'pending');
-      saveSubmission(value,memberId??null,current,`member:${link.kind}`);
-      if(link.kind==='common'){
-        const edit=newLink(e,'submission',null,link.expires_at,allowed,value.id,link.id);
+      const memberId=identity?.memberId??liveLink.member_id??(current?store.row('SELECT member_id FROM submissions WHERE id=?',current.id)?.member_id as string|null:null);
+      const body=object(req.body);
+      const value=answer(identity?{...body,name:identity.name}:body,liveEvent,current,allowed,memberId?'linked':'pending');
+      saveSubmission(value,memberId??null,current,identity?'member:coms-common':`member:${liveLink.kind}`);
+      if(liveLink.kind==='common'&&!identity){
+        const edit=newLink(liveEvent,'submission',null,liveLink.expires_at,allowed,value.id,liveLink.id);
         return {submission:value,editToken:edit.token};
       }
       return {submission:value};
@@ -230,7 +285,9 @@ export function buildApp(options:Options) {
     if(Date.parse(expiresAt)<=now().getTime())invalid('링크 만료 시각이 현재보다 늦어야 해요.');
     const allowed=body.scopes===undefined?(kind==='personal'?scopes:scopes.filter(v=>v!=='payment')):choices(body.scopes,4);
     if(!allowed.length||allowed.some(s=>!scopes.includes(s))||(kind==='common'&&allowed.includes('payment')))invalid('링크 권한 범위를 확인해 주세요.');
-    return newLink(e,kind,memberId,expiresAt,allowed);
+    const issued=newLink(e,kind,memberId,expiresAt,allowed);
+    if(kind==='personal'&&memberId)store.run('DELETE FROM revoked_members WHERE event_id=? AND member_id=?',e.id,memberId);
+    return issued;
   }));
   app.post<{Params:{id:string}}>('/api/admin/links/:id/revoke',adminOnly,(req)=>op(req,'admin',()=>{
     const id=uuid(req.params.id),row=store.row('SELECT id FROM links WHERE id=?',id);
@@ -248,6 +305,7 @@ export function buildApp(options:Options) {
   }));
   app.post<{Params:{id:string}}>('/api/admin/events/:id/links/revoke-member',adminOnly,(req)=>op(req,'admin',()=>{
     const eventId=getEvent(uuid(req.params.id)).id,memberId=uuid(object(req.body).memberId);
+    store.run('INSERT INTO revoked_members(event_id,member_id,revoked_at) VALUES(?,?,?) ON CONFLICT(event_id,member_id) DO UPDATE SET revoked_at=excluded.revoked_at',eventId,memberId,now().toISOString());
     const links=store.rows("SELECT id FROM links WHERE event_id=? AND revoked=0 AND ((kind='personal' AND member_id=?) OR (kind='submission' AND submission_id IN (SELECT id FROM submissions WHERE event_id=? AND member_id=?)))",eventId,memberId,eventId,memberId);
     for(const link of links)revokeLink(String(link.id));
     return {revokedCount:links.length};

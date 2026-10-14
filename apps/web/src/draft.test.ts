@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { nextOperation, responseError, paymentError, keepOperation, pendingKey, readPending } from './draft.ts';
+import { comsAuthUrl, nextOperation, responseError, paymentError, keepOperation, pendingKey, readPending } from './draft.ts';
 
 test('uncertain retry reuses operation, changed draft gets a new one', () => {
   const first = nextOperation(null, false);
@@ -52,4 +52,24 @@ test('pending receipt is scoped by token hash and rejects corrupt session data',
 test('payment claim rejects invalid amount and future time', () => {
   assert.match(paymentError({ amount: '0', depositorName: '가상', depositedAt: '2026-01-01T12:00' }) ?? '', /금액/);
   assert.match(paymentError({ amount: '1000', depositorName: '가상', depositedAt: '2999-01-01T12:00' }) ?? '', /미래/);
+});
+
+test('common-link recovery is isolated between authenticated members and legacy anonymous receipts', async () => {
+  const alice = await pendingKey('same-common-link', 'member-a');
+  const bob = await pendingKey('same-common-link', 'member-b');
+  assert.notEqual(alice, bob);
+  assert.notEqual(alice, await pendingKey('same-common-link'));
+  assert.equal(alice, await pendingKey('same-common-link', 'member-a'));
+  assert.equal(alice.includes('member-a'), false);
+});
+
+test('COMS login and signup keep invitation capabilities out of the query string', () => {
+  const token = 'private-invitation-token';
+  for (const page of ['login', 'signup'] as const) {
+    const url = new URL(comsAuthUrl(page, '/companion/respond', token), 'https://coms.kw.ac.kr');
+    assert.equal(url.pathname, `/${page}`);
+    assert.equal(url.searchParams.get('returnTo'), '/companion/respond');
+    assert.equal(url.hash, `#${token}`);
+    assert.equal(url.search.includes(token), false);
+  }
 });
