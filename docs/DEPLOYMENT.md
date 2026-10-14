@@ -39,7 +39,7 @@ v3에서는 회원별 철회가 링크 취소로만 기록되므로 과거 철�
 
 ## 배포와 복구
 
-1. 테스트·타입 검사·빌드·공개 파일 검사를 통과한 커밋만 새 release 폴더로 전송한다. 비공개 설정·회원 파일·DB·Android 산출물은 전송 목록에서 제외한다.
+1. 테스트·타입 검사·빌드·공개 파일 검사를 통과한 커밋만 새 release 폴더로 전송한다. 비공개 설정·회원 파일·DB·Android 산출물은 전송 목록에서 제외한다. 새 release의 공개 소스는 Node 사용자도 읽을 수 있도록 a+rX 권한을 확인한다. 비공개 환경파일0600·데이터 디렉터리0700은 그대로 유지한다.
 2. 명부 수집기를 먼저 실행하고, `docker compose --env-file <private-env> -f <release>/deploy/compose.yaml config -q`로 설정을 확인한다.
 3. 이미지를 빌드하고 기존 release·이미지 식별자를 보관한다. 전용 Compose 프로젝트의 `up -d`와 health check를 확인한다.
 4. Nginx 변경은 `/companion/` 블록에 한정한다. 공개 HTTPS의 웹·파일·API 인증·응답 저장과 기존 COMS 홈을 검증한다.
