@@ -30,8 +30,11 @@ const bearer=(token:string)=>({authorization:`Bearer ${token}`});
 test('admin roster reads only a validated private snapshot',async t=>{
   const dir=mkdtempSync(join(tmpdir(),'companion-roster-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
   const rosterPath=join(dir,'eligible-members.json');
-  const member={studentId:'20260001',name:'가상 회원',phone:'010-0000-0000',generation:'27기'};
-  const snapshot={source:'coms-eligible-members',updatedAt:'2026-10-14T00:00:00Z',members:[member]};
+  const members=[
+    {sourceId:'101',studentId:'',name:'가상 회원 A',phone:'010-0000-0000',generation:'27기'},
+    {sourceId:'102',studentId:'',name:'가상 회원 B',phone:'010-0000-0001',generation:'27기'}
+  ];
+  const snapshot={source:'coms-eligible-members',updatedAt:'2026-10-14T00:00:00Z',members};
   writeFileSync(rosterPath,JSON.stringify(snapshot));
   const app=buildApp({adminToken,encryptionKey:key,databasePath:':memory:',publicBaseUrl:'https://example.invalid',rosterPath});t.after(()=>app.close());
   assert.equal((await app.inject('/api/admin/roster')).statusCode,401);
@@ -40,6 +43,9 @@ test('admin roster reads only a validated private snapshot',async t=>{
   assert.equal(reply.statusCode,200,reply.body);
   assert.deepEqual(reply.json(),snapshot);
   assert.equal(reply.headers['cache-control'],'no-store');
+  const repeatedStudentId={...snapshot,members:members.map(member=>({...member,studentId:'20260001'}))};
+  writeFileSync(rosterPath,JSON.stringify(repeatedStudentId));
+  assert.deepEqual((await app.inject({url:'/api/admin/roster',headers:auth})).json(),repeatedStudentId);
 });
 
 test('unavailable or malformed roster returns a safe 503 without exposing member data',async t=>{
@@ -48,14 +54,15 @@ test('unavailable or malformed roster returns a safe 503 without exposing member
   const app=buildApp({adminToken,encryptionKey:key,databasePath:':memory:',publicBaseUrl:'https://example.invalid',rosterPath});t.after(()=>app.close());
   const request=()=>app.inject({url:'/api/admin/roster',headers:auth});
   assert.equal((await request()).statusCode,503);
-  const member={studentId:'20260001',name:'비공개 가상 회원',phone:'010-0000-0000',generation:'27기'};
+  const member={sourceId:'101',studentId:'',name:'비공개 가상 회원',phone:'010-0000-0000',generation:'27기'};
   const valid={source:'coms-eligible-members',updatedAt:'2026-10-14T00:00:00Z',members:[member]};
   const invalid=[
     '{broken',
     JSON.stringify({...valid,source:'untrusted'}),
     JSON.stringify({...valid,members:[member,{...member}]}),
     JSON.stringify({...valid,members:[{...member,password:'secret'}]}),
-    JSON.stringify({...valid,members:[{...member,studentId:' '}]}),
+    JSON.stringify({...valid,members:[{...member,sourceId:' '}]}),
+    JSON.stringify({...valid,members:[{...member,studentId:' 20260001 '}]}),
     ' '.repeat(1024*1024+1)
   ];
   for(const content of invalid){

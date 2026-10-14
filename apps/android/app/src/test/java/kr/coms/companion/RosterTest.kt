@@ -7,8 +7,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RosterTest {
-    private fun row(studentId: String, name: String, phone: String = "01000000001", generation: String = "1기") =
-        RosterMember(studentId, name, phone, generation)
+    private fun row(sourceId: String, name: String, phone: String = "01000000001", generation: String = "1기", studentId: String = sourceId) =
+        RosterMember(sourceId, studentId, name, phone, generation)
 
     private fun snapshot(vararg members: RosterMember) =
         validatedRosterSnapshot("coms-eligible-members", "2026-10-14T00:00:00Z", members.toList())
@@ -38,6 +38,22 @@ class RosterTest {
         assertEquals(existing.role, updated.role)
         assertEquals(RosterPreview(0, 1, 0, 0, 0), previewRoster(snapshot(source), listOf(existing)))
         assertEquals(RosterPreview(0, 0, 0, 0, 0), previewRoster(snapshot(source), listOf(updated)))
+    }
+
+    @Test fun blankOrDuplicateStudentIdsKeepDistinctStableSourceIdentities() {
+        val roster = snapshot(row("eligible-1", "가상 A", "01000000001", studentId = ""),
+            row("eligible-2", "가상 B", "01000000002", studentId = ""))
+        assertEquals(2, roster.members.size)
+        assertEquals(2, roster.members.map { it.id }.toSet().size)
+        val imported = roster.members.map { importedMember(it, null) }
+        assertEquals(RosterPreview(2, 0, 0, 0, 0), previewRoster(roster, emptyList()))
+        assertEquals(RosterPreview(0, 0, 0, 0, 0), previewRoster(roster, imported))
+        assertEquals(imported.map { it.id }, snapshot(row("eligible-1", "변경 A", studentId = ""),
+            row("eligible-2", "변경 B", studentId = "")).members.map { it.id })
+        assertEquals(2, snapshot(row("eligible-1", "A", studentId = "duplicate"),
+            row("eligible-2", "B", studentId = "duplicate")).members.map { it.id }.toSet().size)
+        assertThrows(IllegalArgumentException::class.java) { snapshot(row("same-source", "A", studentId = ""),
+            row("same-source", "B", studentId = "")) }
     }
 
     @Test fun malformedSnapshotIsRejectedAndPhoneIssuesDoNotDiscardMembership() {

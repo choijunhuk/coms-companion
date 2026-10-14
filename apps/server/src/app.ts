@@ -27,14 +27,15 @@ function parseRoster(raw:string) {
   if(!fields(value,['source','updatedAt','members'])||value.source!=='coms-eligible-members'||
     typeof value.updatedAt!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.test(value.updatedAt)||
     !Number.isFinite(Date.parse(value.updatedAt))||!Array.isArray(value.members)||value.members.length>5000)throw new Error('Invalid roster snapshot');
-  const ids=new Set<string>();
+  const sourceIds=new Set<string>();
   const members=value.members.map(input=>{
-    if(!fields(input,['studentId','name','phone','generation'])||
-      !clean(input.studentId,64,true)||input.studentId!==input.studentId.trim()||
+    if(!fields(input,['sourceId','studentId','name','phone','generation'])||
+      !clean(input.sourceId,64,true)||input.sourceId!==input.sourceId.trim()||
+      !clean(input.studentId,64)||input.studentId!==input.studentId.trim()||
       !clean(input.name,100,true)||!clean(input.phone,40)||!clean(input.generation,40)||
-      ids.has(input.studentId))throw new Error('Invalid roster member');
-    ids.add(input.studentId);
-    return {studentId:input.studentId,name:input.name,phone:input.phone,generation:input.generation};
+      sourceIds.has(input.sourceId))throw new Error('Invalid roster member');
+    sourceIds.add(input.sourceId);
+    return {sourceId:input.sourceId,studentId:input.studentId,name:input.name,phone:input.phone,generation:input.generation};
   });
   return {source:value.source,updatedAt:value.updatedAt,members};
 }

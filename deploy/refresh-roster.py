@@ -12,11 +12,12 @@ JS_TRIM = '\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u20
 def fetch_roster(container):
     query = """BEGIN READ ONLY;
 SELECT COALESCE(json_agg(json_build_object(
+  'sourceId', id::text,
   'studentId', COALESCE(btrim(student_id), ''),
   'name', COALESCE(btrim(name), ''),
   'phone', COALESCE(btrim(phone), ''),
   'generation', COALESCE(btrim(generation), '')
-) ORDER BY student_id), '[]'::json) FROM eligible_members;
+) ORDER BY id), '[]'::json) FROM eligible_members;
 ROLLBACK;
 """
     result = subprocess.run(
@@ -36,18 +37,18 @@ def save_snapshot(snapshot, destination):
     members = snapshot['members']
     if not isinstance(members, list) or len(members) > 5000:
         raise ValueError('Roster size is invalid')
-    student_ids = set()
-    limits = {'studentId': 64, 'name': 100, 'phone': 40, 'generation': 40}
+    source_ids = set()
+    limits = {'sourceId': 64, 'studentId': 64, 'name': 100, 'phone': 40, 'generation': 40}
     for member in members:
-        if set(member) != {'studentId', 'name', 'phone', 'generation'} or any(
+        if set(member) != set(limits) or any(
             not isinstance(member[key], str) for key in member
-        ) or not member['studentId'] or not member['name'].strip(JS_TRIM) or member['studentId'] != member['studentId'].strip(JS_TRIM) or member['studentId'] in student_ids:
+        ) or not member['sourceId'] or not member['name'].strip(JS_TRIM) or member['sourceId'] != member['sourceId'].strip(JS_TRIM) or member['studentId'] != member['studentId'].strip(JS_TRIM) or member['sourceId'] in source_ids:
             raise ValueError('Roster has invalid required fields')
         if any(len(member[key].encode('utf-16-le', errors='surrogatepass')) // 2 > limit
                or any(ord(char) < 32 or 127 <= ord(char) <= 159 for char in member[key])
                for key, limit in limits.items()):
             raise ValueError('Roster field exceeds the API contract')
-        student_ids.add(member['studentId'])
+        source_ids.add(member['sourceId'])
     encoded = json.dumps(snapshot, ensure_ascii=False).encode('utf-8')
     if len(encoded) > 1024 * 1024:
         raise ValueError('Roster snapshot exceeds 1 MiB')

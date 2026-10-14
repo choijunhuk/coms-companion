@@ -42,4 +42,4 @@
 
 `PUBLIC_BASE_URL`은 HTTPS origin과 선택적인 안전한 경로(`/companion` 등)를 허용하고 비로컬 HTTP, 인증정보·query·fragment·경로 이동 구문을 거부합니다. 프록시 뒤의 내부 API 경로는 기존 `/api/...`를 유지하며 발급 링크에 공개 경로를 포함합니다. Origin 검사는 경로를 제외한 scheme·host·port를 비교합니다. 실제 배포·기기 수용은 STATUS.md를 기준으로 하며 링크를 만든 사실만으로 실제 발송을 표시하지 않습니다.
 
-`GET /api/admin/roster`는 기존 운영자 Bearer 인증을 요구합니다. 선택한 비공개 명부 스냅샷에서 `{source:'coms-eligible-members',updatedAt,members:[{studentId,name,phone,generation}]}`만 반환합니다. 최대1MiB/5,000행, 중복·빈 학번과 이름·잘못된 형식을 거부하고 파일이 없거나 올바르지 않으면 개인정보 없는 `503 ROSTER_UNAVAILABLE`을 반환합니다. COMS DB를 수정하거나 일반 회원 링크에 명부 권한을 부여하지 않습니다.
+`GET /api/admin/roster`는 기존 운영자 Bearer 인증을 요구합니다. 선택한 비공개 명부 스냅샷에서 `{source:'coms-eligible-members',updatedAt,members:[{sourceId,studentId,name,phone,generation}]}`만 반환합니다. 최대1MiB/5,000행, 중복·빈 원본 등록 ID와 빈 이름·잘못된 형식을 거부합니다. 학번은 없거나 중복될 수 있으며 식별에 사용하지 않습니다. 파일이 없거나 올바르지 않으면 개인정보 없는 `503 ROSTER_UNAVAILABLE`을 반환합니다. COMS DB를 수정하거나 일반 회원 링크에 명부 권한을 부여하지 않습니다.

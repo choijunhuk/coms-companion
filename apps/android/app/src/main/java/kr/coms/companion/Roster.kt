@@ -7,11 +7,11 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 private const val ROSTER_SOURCE = "coms-eligible-members"
-// A fixed namespace keeps imported IDs stable without matching manual records by name or phone.
+// A fixed namespace and source row ID keep imports stable even when student IDs are absent or duplicated.
 private const val ROSTER_ID_NAMESPACE = "kr.coms.companion:coms-eligible-members:v1:"
 
-data class RosterMember(val studentId: String, val name: String, val phone: String, val generation: String) {
-    val id: String get() = UUID.nameUUIDFromBytes((ROSTER_ID_NAMESPACE + studentId).toByteArray(Charsets.UTF_8)).toString()
+data class RosterMember(val sourceId: String, val studentId: String, val name: String, val phone: String, val generation: String) {
+    val id: String get() = UUID.nameUUIDFromBytes((ROSTER_ID_NAMESPACE + sourceId).toByteArray(Charsets.UTF_8)).toString()
 }
 
 data class RosterSnapshot(val updatedAt: String, val members: List<RosterMember>)
@@ -31,7 +31,8 @@ fun parseRosterSnapshot(json: JSONObject): RosterSnapshot {
         val row = rows.opt(index) as? JSONObject ?: error("회원 명부 ${index + 1}행이 올바르지 않아요")
         fun field(key: String): String = (row.opt(key) as? String)?.trim()
             ?: error("회원 명부 ${index + 1}행의 $key 값이 올바르지 않아요")
-        RosterMember(field("studentId"), field("name"), field("phone"), field("generation"))
+        val sourceId = row.opt("sourceId") as? String ?: error("회원 명부 ${index + 1}행의 sourceId 값이 올바르지 않아요")
+        RosterMember(sourceId, field("studentId"), field("name"), field("phone"), field("generation"))
     }
     return validatedRosterSnapshot(json.optString("source"), updatedAt, members)
 }
@@ -40,8 +41,9 @@ internal fun validatedRosterSnapshot(source: String, updatedAt: String, members:
     require(source == ROSTER_SOURCE) { "COMS 회원 명부 출처를 확인할 수 없어요" }
     require(runCatching { Instant.parse(updatedAt) }.isSuccess) { "회원 명부 갱신 시간이 올바르지 않아요" }
     require(members.isNotEmpty()) { "회원 명부가 비어 있어요" }
-    require(members.all { it.studentId.isNotBlank() && it.name.isNotBlank() }) { "회원 명부에 학번·이름이 빈 행이 있어요" }
-    require(members.map { it.studentId }.distinct().size == members.size) { "회원 명부에 중복 학번이 있어요" }
+    require(members.all { it.sourceId.isNotBlank() && it.sourceId.length <= 64 && it.sourceId == it.sourceId.trim() &&
+        it.sourceId.none { char -> Character.isISOControl(char) } && it.name.isNotBlank() }) { "회원 명부에 출처 ID·이름이 올바르지 않은 행이 있어요" }
+    require(members.map { it.sourceId }.distinct().size == members.size) { "회원 명부에 중복 출처 ID가 있어요" }
     return RosterSnapshot(updatedAt, members)
 }
 
