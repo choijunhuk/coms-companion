@@ -158,7 +158,7 @@ function App() {
       setUncertainResponse(false);
       clearPending();
       if (result.editToken) {
-        history.replaceState(null, '', `/respond#${encodeURIComponent(result.editToken)}`);
+        history.replaceState(null, '', `${import.meta.env.BASE_URL}respond#${encodeURIComponent(result.editToken)}`);
         setToken(result.editToken);
       } else if (!context) void refresh(true);
       setStep('done');
