@@ -19,6 +19,7 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm run audit:public
+      - run: python3 -m unittest discover -s deploy -p 'test_*.py'
       - name: Korean system fonts for browser rendering
         run: |
           sudo apt-get update

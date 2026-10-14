@@ -56,7 +56,7 @@ function App() {
   const errorRef = useRef<HTMLDivElement>(null);
 
   async function request<T>(path: string, payload?: object): Promise<T> {
-    const response = await fetch(path, {
+    const response = await fetch(`${import.meta.env.BASE_URL.replace(/\/$/, '')}${path}`, {
       method: payload ? 'POST' : 'GET',
       headers: { Authorization: `Bearer ${token}`, ...(payload ? { 'Content-Type': 'application/json' } : {}) },
       body: payload ? JSON.stringify(payload) : undefined,

@@ -78,9 +78,10 @@ fun requireLedgerEntry(kind: String, amountWon: Long, reason: String): Long {
     }
 }
 
+private val shareUrls = Regex("https?://\\S+")
+
 fun publicShareSafe(text: String, members: List<Member>, allowedCommonUrls: Set<String> = emptySet()): Boolean {
-    val urls = Regex("https?://\\S+")
-    val redacted = urls.replace(text) { match ->
+    val redacted = shareUrls.replace(text) { match ->
         val url = match.value
         if (url.startsWith("https://") && "/respond#" in url && url in allowedCommonUrls)
             "[공통 응답 링크]" else url
@@ -91,3 +92,8 @@ fun publicShareSafe(text: String, members: List<Member>, allowedCommonUrls: Set<
         !redacted.contains("token=", ignoreCase = true) && !redacted.contains("/respond#", ignoreCase = true) &&
         members.none { it.name.isNotBlank() && redacted.contains(it.name) }
 }
+
+fun kakaoShareLink(text: String, allowedCommonUrls: Set<String>, landingUrl: String): String =
+    shareUrls.findAll(text).map { it.value }
+        .filter { it.startsWith("https://") && "/respond#" in it && it in allowedCommonUrls }
+        .distinct().singleOrNull() ?: landingUrl

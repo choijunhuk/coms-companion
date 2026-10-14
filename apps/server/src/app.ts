@@ -1,6 +1,6 @@
 import Fastify, {type FastifyRequest} from 'fastify';
 import {randomBytes,randomUUID,timingSafeEqual} from 'node:crypto';
-import {readFileSync} from 'node:fs';
+import {readFileSync,statSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {ApiError,Store,hash,type SqlRow} from './store.ts';
 import {object,string,uuid,integer,bool,date,choices,invalid} from './validation.ts';
@@ -12,10 +12,32 @@ type Review={reviewId:string;ledgerEntryId:string;chargeId:string;confirmedAmoun
 type ReviewedPayment=Payment&{review?:Review;reviewReason?:string};
 type Link=SqlRow&{id:string;event_id:string;kind:'common'|'personal'|'submission';member_id:string|null;submission_id:string|null;expires_at:string;revoked:number;scopes:string};
 type State='open'|'closed'|'cancelled'|'expired'|'revoked';
-type Options={adminToken:string;encryptionKey:string;databasePath:string;publicBaseUrl:string;webDist?:string;now?:()=>Date;rateLimit?:number};
+type Options={adminToken:string;encryptionKey:string;databasePath:string;publicBaseUrl:string;webDist?:string;now?:()=>Date;rateLimit?:number;trustProxy?:'loopback';rosterPath?:string};
 const scopes=['rsvp','notice','vote','payment'];
 const parse=<T>(row:SqlRow):T=>JSON.parse(String(row.payload)) as T;
 const messages:Record<State,string>={open:'응답을 제출하거나 수정할 수 있어요.',closed:'응답 마감이 지나 수정할 수 없어요.',cancelled:'취소된 행사예요.',expired:'링크 유효기간이 지났어요.',revoked:'취소된 초대 링크예요.'};
+const rosterUnavailable=()=>new ApiError(503,'ROSTER_UNAVAILABLE','회원 명부를 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.');
+
+function parseRoster(raw:string) {
+  const value:unknown=JSON.parse(raw);
+  const fields=(input:unknown,keys:string[]):input is Record<string,unknown>=>
+    !!input&&typeof input==='object'&&!Array.isArray(input)&&Object.keys(input).length===keys.length&&keys.every(key=>Object.hasOwn(input,key));
+  const clean=(input:unknown,max:number,required=false):input is string=>
+    typeof input==='string'&&input.length<=max&&(!required||input.trim().length>0)&&!/\p{Cc}/u.test(input);
+  if(!fields(value,['source','updatedAt','members'])||value.source!=='coms-eligible-members'||
+    typeof value.updatedAt!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.test(value.updatedAt)||
+    !Number.isFinite(Date.parse(value.updatedAt))||!Array.isArray(value.members)||value.members.length>5000)throw new Error('Invalid roster snapshot');
+  const ids=new Set<string>();
+  const members=value.members.map(input=>{
+    if(!fields(input,['studentId','name','phone','generation'])||
+      !clean(input.studentId,64,true)||input.studentId!==input.studentId.trim()||
+      !clean(input.name,100,true)||!clean(input.phone,40)||!clean(input.generation,40)||
+      ids.has(input.studentId))throw new Error('Invalid roster member');
+    ids.add(input.studentId);
+    return {studentId:input.studentId,name:input.name,phone:input.phone,generation:input.generation};
+  });
+  return {source:value.source,updatedAt:value.updatedAt,members};
+}
 
 function validateEvent(value:unknown):EventView {
   const e=object(value),options=e.pollOptions;
@@ -29,10 +51,16 @@ export function buildApp(options:Options) {
   if(options.adminToken.length<32||options.adminToken.includes('replace_with'))throw new Error('ADMIN_TOKEN must be a random secret of at least 32 characters.');
   if(!/^[a-f0-9]{64}$/i.test(options.encryptionKey))throw new Error('SERVER_ENCRYPTION_KEY must contain 64 hex characters.');
   const base=new URL(options.publicBaseUrl);
-  if(base.username||base.password||base.search||base.hash||base.pathname!=='/')throw new Error('PUBLIC_BASE_URL must be an origin without credentials.');
+  const rawPath=/^[a-z][a-z0-9+.-]*:\/\/[^/?#]+([^?#]*)/i.exec(options.publicBaseUrl)?.[1]??'';
+  const segments=rawPath.split('/').slice(1);
+  if(base.username||base.password||/[\\\s?#]/.test(options.publicBaseUrl)||
+    (rawPath!==''&&!rawPath.startsWith('/'))||
+    segments.some((segment,index)=>segment===''&&index!==segments.length-1||segment==='.'||segment==='..'||!segment.match(/^[A-Za-z0-9._~-]*$/)))
+    throw new Error('PUBLIC_BASE_URL must be an origin with an optional safe base path, without credentials, query, or fragment.');
   if(base.protocol!=='https:'&&!(base.protocol==='http:'&&['localhost','127.0.0.1','10.0.2.2','[::1]'].includes(base.hostname)))throw new Error('Use HTTPS outside local development.');
+  const publicPath=rawPath.replace(/\/$/,'');
   const store=new Store(options.databasePath,options.encryptionKey),now=options.now??(()=>new Date());
-  const app=Fastify({logger:false,bodyLimit:64*1024,trustProxy:false});
+  const app=Fastify({logger:false,bodyLimit:64*1024,trustProxy:options.trustProxy==='loopback'?(address)=>address==='127.0.0.1'||address==='::1':false});
   const limits=new Map<string,{since:number;count:number}>();
   app.addHook('onClose',async()=>store.close());
   app.addHook('onRequest',async(req,reply)=>{
@@ -118,7 +146,7 @@ export function buildApp(options:Options) {
   function newLink(e:EventView,kind:Link['kind'],memberId:string|null,expiresAt:string,allowed:string[],submissionId:string|null=null,parentLinkId:string|null=null) {
     const id=randomUUID(),value=randomBytes(32).toString('base64url');
     store.run('INSERT INTO links(id,token_hash,event_id,kind,member_id,submission_id,scopes,expires_at,parent_link_id) VALUES(?,?,?,?,?,?,?,?,?)',id,hash(value),e.id,kind,memberId,submissionId,JSON.stringify(allowed),expiresAt,parentLinkId);
-    return {linkId:id,token:value,url:`${base.origin}/respond#${value}`};
+    return {linkId:id,token:value,url:`${base.origin}${publicPath}/respond#${value}`};
   }
   function revokeLink(id:string) {
     store.run('UPDATE links SET revoked=1 WHERE id=? OR parent_link_id=?',id,id);
@@ -127,6 +155,16 @@ export function buildApp(options:Options) {
   }
 
   app.get('/api/health',()=>({status:'ok',mode:'templates-no-llm'}));
+  app.get('/api/admin/roster',adminOnly,()=>{
+    if(!options.rosterPath)throw rosterUnavailable();
+    try {
+      const stat=statSync(options.rosterPath);
+      if(!stat.isFile()||stat.size>1024*1024)throw new Error('Invalid roster size');
+      const raw=readFileSync(options.rosterPath,'utf8');
+      if(Buffer.byteLength(raw,'utf8')>1024*1024)throw new Error('Invalid roster size');
+      return parseRoster(raw);
+    } catch {throw rosterUnavailable();}
+  });
   app.get('/api/respond',(req)=>{
     const link=getLink(req),e=getEvent(link.event_id),accessState=state(link,e);
     const privateReadable=['open','closed'].includes(accessState),allowed=JSON.parse(link.scopes) as string[];

@@ -16,8 +16,14 @@ class ApiFailure(val status: Int, message: String, val currentJson: String = "",
 
 fun checkedBaseUrl(value: String, debug: Boolean): String {
     val uri = URI(value.trim())
-    require(uri.userInfo == null && uri.query == null && uri.fragment == null && (uri.path.isNullOrEmpty() || uri.path == "/")) {
-        "서버 주소는 경로가 없는 원본 주소로 입력해 주세요"
+    val path = uri.rawPath.orEmpty()
+    val pathSegments = path.removeSuffix("/").split('/').drop(1)
+    require(uri.userInfo == null && uri.query == null && uri.fragment == null &&
+        (path.isEmpty() || path == "/" || path.startsWith('/') && pathSegments.all { segment ->
+            segment.isNotEmpty() && segment != "." && segment != ".." &&
+                segment.all { it.isLetterOrDigit() && it.code < 128 || it in "-._~" }
+        })) {
+        "서버 주소에는 안전한 경로만 입력해 주세요"
     }
     require(uri.host != null && (uri.scheme == "https" || debug && uri.scheme == "http" && uri.host == "10.0.2.2")) {
         "HTTPS 주소가 필요해요. 에뮬레이터 디버그에서는 http://10.0.2.2만 허용해요"
@@ -54,6 +60,7 @@ class RemoteApi(private val baseUrl: String, private val adminToken: String) {
     suspend fun revokeMemberLinks(eventId: String, payload: String): JSONObject =
         request("POST", "/api/admin/events/$eventId/links/revoke-member", payload)
     suspend fun responses(eventId: String): String = request("GET", "/api/admin/events/$eventId/responses").toString()
+    suspend fun roster(): RosterSnapshot = parseRosterSnapshot(request("GET", "/api/admin/roster"))
     suspend fun changes(cursor: Long): JSONObject = request("GET", "/api/admin/changes?cursor=$cursor")
     suspend fun linkSubmission(eventId: String, submissionId: String, payload: String): JSONObject =
         request("POST", "/api/admin/events/$eventId/submissions/$submissionId/link", payload)

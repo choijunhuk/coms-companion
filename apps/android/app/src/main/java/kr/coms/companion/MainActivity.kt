@@ -1352,20 +1352,24 @@ private suspend fun currentCommonUrls(dao: AppDao): Set<String> {
                     val snapshot = publicBody
                     scope.launch {
                     try {
-                    if (!publicShareSafe(snapshot, dao.memberSnapshot(), currentCommonUrls(dao))) { onMessage("공통 링크가 취소·만료됐거나 개인정보가 있어 공유하지 않았어요"); return@launch }
+                    val currentUrls = currentCommonUrls(dao)
+                    if (!publicShareSafe(snapshot, dao.memberSnapshot(), currentUrls)) { onMessage("공통 링크가 취소·만료됐거나 개인정보가 있어 공유하지 않았어요"); return@launch }
                     if (BuildConfig.KAKAO_APP_KEY.isBlank() || BuildConfig.KAKAO_SHARE_URL.isBlank()) shareCommonWithAndroid(context, snapshot, dao, scope, onMessage)
                     else try {
                         if (!ShareClient.instance.isKakaoTalkSharingAvailable(context)) { kakaoError = "카카오톡 공유를 사용할 수 없어요"; kakaoFallback = snapshot }
-                        else ShareClient.instance.shareDefault(context, TextTemplate(text = snapshot, link = Link(webUrl = BuildConfig.KAKAO_SHARE_URL, mobileWebUrl = BuildConfig.KAKAO_SHARE_URL))) { result, error ->
-                            if (error != null || result == null) { kakaoError = error?.message ?: "카카오톡 공유 결과를 받지 못했어요"; kakaoFallback = snapshot }
-                            else try {
-                                context.startActivity(result.intent)
-                                scope.launch {
-                                    try { dao.put(ContactRecord(memberId = "", memberName = "공통 공지", phoneSnapshot = "", bodySnapshot = snapshot, channel = "카카오톡 공유", state = "앱 전달됨")) }
-                                    catch (e: CancellationException) { throw e } catch (_: Exception) { onMessage("카카오톡 화면은 열렸지만 연락 기록 저장에 실패했어요") }
-                                }
-                                onMessage("카카오톡 공유 화면을 열었어요. 실제 전송 여부는 확인되지 않았어요")
-                            } catch (e: ActivityNotFoundException) { kakaoError = e.message ?: "카카오톡 공유 화면을 열지 못했어요"; kakaoFallback = snapshot }
+                        else {
+                            val shareUrl = kakaoShareLink(snapshot, currentUrls, BuildConfig.KAKAO_SHARE_URL)
+                            ShareClient.instance.shareDefault(context, TextTemplate(text = snapshot, link = Link(webUrl = shareUrl, mobileWebUrl = shareUrl))) { result, error ->
+                                if (error != null || result == null) { kakaoError = error?.message ?: "카카오톡 공유 결과를 받지 못했어요"; kakaoFallback = snapshot }
+                                else try {
+                                    context.startActivity(result.intent)
+                                    scope.launch {
+                                        try { dao.put(ContactRecord(memberId = "", memberName = "공통 공지", phoneSnapshot = "", bodySnapshot = snapshot, channel = "카카오톡 공유", state = "앱 전달됨")) }
+                                        catch (e: CancellationException) { throw e } catch (_: Exception) { onMessage("카카오톡 화면은 열렸지만 연락 기록 저장에 실패했어요") }
+                                    }
+                                    onMessage("카카오톡 공유 화면을 열었어요. 실제 전송 여부는 확인되지 않았어요")
+                                } catch (e: ActivityNotFoundException) { kakaoError = e.message ?: "카카오톡 공유 화면을 열지 못했어요"; kakaoFallback = snapshot }
+                            }
                         }
                     } catch (e: Exception) { kakaoError = e.message ?: "카카오톡 공유를 시작하지 못했어요"; kakaoFallback = snapshot }
                     } catch (e: CancellationException) { throw e }
@@ -1455,6 +1459,59 @@ private fun shareCommonWithAndroid(context: Context, text: String, dao: AppDao, 
     DiscardPrompt(discard, onKeep = { discard = false }, onDiscard = { discard = false; onDismiss() })
 }
 
+@Composable private fun RosterScreen(database: AppDatabase, serverUrl: String, adminToken: String, onBack: () -> Unit, onMessage: (String) -> Unit) {
+    val scope = rememberCoroutineScope()
+    var snapshot by remember(serverUrl, adminToken) { mutableStateOf<RosterSnapshot?>(null) }
+    var preview by remember(serverUrl, adminToken) { mutableStateOf<RosterPreview?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf("") }
+    Page {
+        TextButton(onClick = onBack, enabled = !busy) { Text("← 설정") }
+        Section("COMS 회원 명부 확인")
+        Hint("연결된 서버의 회원 명부를 확인한 뒤 이 기기에 적용해요. 이름·번호·기수만 갱신하며 기존 회원의 상태·수신 설정·소모임·학기·역할과 회비 기록은 유지해요")
+        OutlinedButton(onClick = {
+            if (!busy) {
+                busy = true
+                scope.launch {
+                    try {
+                        val fetched = RemoteApi(checkedBaseUrl(serverUrl, BuildConfig.DEBUG), adminToken).roster()
+                        val freshPreview = previewRoster(fetched, database.dao().memberSnapshot())
+                        snapshot = fetched
+                        preview = freshPreview
+                        error = ""
+                    } catch (e: CancellationException) { throw e }
+                    catch (e: Exception) { snapshot = null; preview = null; error = e.message ?: "회원 명부를 확인하지 못했어요" }
+                    finally { busy = false }
+                }
+            }
+        }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text(if (busy) "확인 중…" else "서버 명부 불러오기") }
+        if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)
+        val loaded = snapshot
+        val counts = preview
+        if (loaded != null && counts != null) {
+            Hint("명부 기준 ${loaded.updatedAt} · ${loaded.members.size}명")
+            CardLine("적용 미리보기", "새 회원 ${counts.newCount}명 · 정보 갱신 ${counts.updatedCount}명 · 이 기기에만 있는 회원 ${counts.localOnlyCount}명")
+            Hint("번호 누락·형식 오류 ${counts.missingOrInvalidPhoneCount}명 · 중복 번호 ${counts.duplicatePhoneCount}명. 해당 회원은 현재 연락 대상 계산에서 제외돼요. 명부의 번호는 발송 동의를 뜻하지 않아요")
+            OutlinedButton(onClick = {
+                if (!busy) {
+                    busy = true
+                    scope.launch {
+                        try {
+                            val applied = applyRoster(database, loaded)
+                            snapshot = null
+                            preview = null
+                            error = ""
+                            onMessage("회원 명부 적용 완료 · 신규 ${applied.newCount}명, 갱신 ${applied.updatedCount}명. 이 기기에만 있는 회원은 유지했어요")
+                        } catch (e: CancellationException) { throw e }
+                        catch (e: Exception) { error = e.message ?: "회원 명부 적용에 실패했어요" }
+                        finally { busy = false }
+                    }
+                }
+            }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text(if (busy) "적용 중…" else "이 기기에 적용") }
+        }
+    }
+}
+
 @Composable private fun SettingsScreen(database: AppDatabase, config: ClubConfig?, members: List<Member>, events: List<Event>, charges: List<Charge>, ledger: List<LedgerEntry>, pendingMutations: List<PendingMutation>, theme: String, semester: String, serverUrl: String, adminToken: String, syncEnabled: Boolean, onlineStateExists: Boolean, discardEpoch: Int, onEditingChange: (Boolean) -> Unit, onMessage: (String) -> Unit, onOpenTemplates: () -> Unit, onSaveClub: suspend (String, String, String) -> Unit, onManualSync: suspend () -> Unit, onSyncEnabled: suspend (Boolean) -> Unit, onTheme: suspend (String) -> Unit, onSemester: suspend (String) -> Unit, onConnection: suspend (String, String) -> Unit) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -1475,6 +1532,7 @@ private fun shareCommonWithAndroid(context: Context, text: String, dao: AppDao, 
         return
     }
     if (settingsSection == "operations") { OperationsScreen(database, members, events, charges, ledger, onBack = { settingsSection = "main" }, onMessage = onMessage); return }
+    if (settingsSection == "roster") { RosterScreen(database, serverUrl, adminToken, onBack = { settingsSection = "main" }, onMessage = onMessage); return }
     Page {
         Section("동아리 정보")
         CardLine(config?.clubName ?: "COM’s", "담당자 ${config?.actor ?: "운영자"} · 계좌 안내 ${if (config?.accountGuide.isNullOrBlank()) "미입력" else "저장됨"}", onClick = { editingClub = true })
@@ -1491,6 +1549,7 @@ private fun shareCommonWithAndroid(context: Context, text: String, dao: AppDao, 
         Hint(if (BuildConfig.KAKAO_APP_KEY.isNotBlank() && BuildConfig.KAKAO_SHARE_URL.isNotBlank()) "카카오 SDK 설정 있음 · 실제 공유 성공은 기기에서 확인" else "카카오 개발자 키·도메인 미설정 · Android 일반 공유/복사 사용")
         Section("온라인 응답 연결")
         CardLine("서버 설정", if (serverUrl.isBlank() || adminToken.isBlank()) "연결 미설정" else "$serverUrl · 운영자 토큰 저장됨", onClick = { editingConnection = true })
+        OutlinedButton(onClick = { settingsSection = "roster" }, enabled = serverUrl.isNotBlank() && adminToken.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("COMS 회원 명부 확인") }
         if (onlineStateExists || !config?.serverOrigin.isNullOrBlank()) Hint("온라인 기록이 있어 연결된 서버 주소만 사용할 수 있어요. 운영자 토큰은 교체할 수 있어요")
         Hint("온라인 설정만으로 배포가 완료되지는 않아요. 응답은 행사별 게시와 링크 발급 후 사용합니다")
         Hint("마지막 동기화 ${config?.lastSyncAt?.let { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.KOREA).format(Date(it)) } ?: "없음"} · ${config?.lastError?.ifBlank { "오류 없음" } ?: "오류 없음"}")

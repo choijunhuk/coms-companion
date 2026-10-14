@@ -1,0 +1,17 @@
+**
+!Dockerfile
+!package.json
+!package-lock.json
+!apps/
+!apps/web/
+!apps/web/package.json
+!apps/web/tsconfig.json
+!apps/web/vite.config.ts
+!apps/web/index.html
+!apps/web/src/
+!apps/web/src/**
+!apps/server/
+!apps/server/package.json
+!apps/server/tsconfig.json
+!apps/server/src/
+!apps/server/src/**

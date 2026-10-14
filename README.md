@@ -42,7 +42,7 @@ npm start
 
 기본 주소는 `http://localhost:3000`이며 빌드된 회원 웹과 API를 함께 제공합니다. 개발 서버는 `npm run dev`, 웹만 실행할 때는 `npm run dev:web`을 사용합니다. 에뮬레이터에서 로컬 서버에 연결할 때 Android 주소는 `http://10.0.2.2:3000`입니다.
 
-현재 운영자가 제공한 도메인은 없습니다. 실제 회원 링크를 공유하려면 HTTPS로 접근 가능한 호스트를 정하고 `PUBLIC_BASE_URL`과 Android 서버 주소를 같은 origin으로 설정해야 합니다. 서버를 공개 배포하거나 기존 COM’s 운영 서비스를 변경하지 않았습니다.
+공개 배포 대상은 `https://coms.kw.ac.kr/companion/`입니다. 웹 빌드의 `PUBLIC_BASE_URL`과 서버의 같은 설정, 앱의 서버 주소를 이 경로에 맞춥니다. 기존 COMS 서버의 독립된 응답 서비스와 읽기 전용 회원 명부 연결 방법은 [DEPLOYMENT](docs/DEPLOYMENT.md)를 확인하세요. 실제 배포·기기 수용 결과는 [STATUS](docs/STATUS.md)에 기록합니다.
 
 ## Kakao 설정
 
@@ -50,7 +50,7 @@ npm start
 
 새 개발 환경에서는 [Android 시작하기](https://developers.kakao.com/docs/ko/android/getting-started)에 따라 네이티브 앱 키에 패키지 `kr.coms.companion`과 **설치할 APK의 인증서 키 해시**를 등록합니다. 제품 링크 관리의 웹 도메인에는 공유 버튼이 여는 HTTPS 주소의 origin을 등록하고, [`local.properties.example`](apps/android/local.properties.example)의 `kakao.nativeAppKey`와 `kakao.shareUrl`을 비공개 파일에 채운 뒤 다시 빌드합니다. 다른 디버그·릴리스·Play 서명을 사용하면 그 인증서 해시도 별도로 등록해야 합니다.
 
-현재 로컬 `kakao.shareUrl`은 공유 화면 검사에 사용한 [공개 개발 안내 페이지](https://github.com/choijunhuk/coms-companion)입니다. 회원 응답 웹이 배포된 주소가 아니며, 실제 회원 응답 서비스가 준비되면 공유 URL과 허용 도메인을 함께 바꿔야 합니다. 이 공유 구현에는 카카오 로그인 권한·REST API 키·어드민 키가 필요하지 않습니다. [공식 공유 안내](https://developers.kakao.com/docs/ko/kakaotalk-share/android-link)
+공유의 기본 연결 주소는 `/companion/`이며, 문구에 현재 유효한 행사 공통 링크가 하나 있으면 카카오 버튼도 그 행사의 응답 페이지를 엽니다. 개인 링크나 임의 주소를 카카오 공통 공유 버튼에 사용하지 않습니다. 이 공유 구현에는 카카오 로그인 권한·REST API 키·어드민 키가 필요하지 않습니다. [공식 공유 안내](https://developers.kakao.com/docs/ko/kakaotalk-share/android-link)
 
 | 기능 | 필요한 설정 |
 | --- | --- |
@@ -58,7 +58,7 @@ npm start
 | 카카오 공식 공유 | 네이티브 앱 키, Android 패키지·서명 해시, 공유 URL·웹 도메인 |
 | 자체 회원 응답 API | HTTPS 호스트, `.env`의 `ADMIN_TOKEN`·`SERVER_ENCRYPTION_KEY`, 앱의 서버 주소·운영자 토큰 |
 
-현재 개발 컴퓨터에는 서버 비밀값도 비공개 `.env`에 준비했지만 공개 서버를 배포하거나 휴대폰의 온라인 연결을 설정하지 않았습니다. 서버 비밀값은 자체 생성하는 자격 증명이며 카카오에서 발급받는 키와 별개입니다.
+서버 비밀값은 자체 생성하는 자격 증명이며 카카오에서 발급받는 키와 별개입니다. 앱 설정의 **COMS 회원 명부 확인**은 연결 서버에서 등록 명부를 가져와 미리보기 후 적용합니다. 기존 수신 설정·활동 상태·회비 기록은 보존합니다.
 
 ## 데이터와 공개 저장소
 

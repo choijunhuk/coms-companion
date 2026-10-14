@@ -1,0 +1,13 @@
+[Unit]
+Description=Refresh the private COMS eligible roster snapshot
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=kw
+ExecStart=/usr/bin/python3 /home/kw/apps/coms-companion/current/deploy/refresh-roster.py --output /home/kw/apps/coms-companion/roster/eligible-members.json
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/kw/apps/coms-companion/roster

@@ -71,6 +71,22 @@ class RulesTest {
         assertFalse(publicShareSafe("안내 $common 01012345678", emptyList(), setOf(common)))
     }
 
+    @Test fun kakaoButtonUsesOnlyTheSingleCurrentCommonLinkInTheMessage() {
+        val landing = "https://example.org/companion/"
+        val current = "https://example.org/companion/respond#current-common"
+        val another = "https://example.org/companion/respond#another-common"
+        val expired = "https://example.org/companion/respond#expired-common"
+        val personal = "https://example.org/companion/respond#personal-token"
+        val approved = setOf(current, another)
+        assertEquals(current, kakaoShareLink("행사 안내 $current", approved, landing))
+        assertEquals(landing, kakaoShareLink("일반 공지", approved, landing))
+        assertEquals(landing, kakaoShareLink("행사 안내 $expired", approved, landing))
+        assertEquals(landing, kakaoShareLink("행사 안내 $personal", approved, landing))
+        assertEquals(landing, kakaoShareLink("행사 안내 https://other.example.org/respond#arbitrary", approved, landing))
+        assertEquals(landing, kakaoShareLink("행사 안내 $current $another", approved, landing))
+        assertEquals(current, kakaoShareLink("행사 안내 $current $current", approved, landing))
+    }
+
     @Test fun operatorResponsesUseOnlyServerAcceptedChoices() {
         assertEquals("attending", responseCode("참석"))
         assertEquals("declined", responseCode("불참"))

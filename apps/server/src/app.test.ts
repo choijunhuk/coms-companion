@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {mkdtempSync, rmSync} from 'node:fs';
+import {mkdtempSync, rmSync, writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {buildApp, type EventView} from './app.ts';
@@ -11,8 +11,8 @@ const key = 'a1'.repeat(32);
 const auth = {authorization: `Bearer ${adminToken}`};
 const event = (): EventView => ({id:randomUUID(),clubName:'가상 동아리',title:'예시 행사',startsAt:null,location:'미정',feeAmount:10000,capacity:2,deadline:null,notice:'가상 안내',cancelled:false,version:0,pollOptions:[{id:'date-a',label:'후보 A'},{id:'date-b',label:'후보 B'}],pollDeadline:null});
 
-async function setup(options: {databasePath?:string; now?:()=>Date}={}) {
-  const app=buildApp({adminToken,encryptionKey:key,databasePath:options.databasePath??':memory:',publicBaseUrl:'https://example.invalid',now:options.now});
+async function setup(options: {databasePath?:string; now?:()=>Date; publicBaseUrl?:string}={}) {
+  const app=buildApp({adminToken,encryptionKey:key,databasePath:options.databasePath??':memory:',publicBaseUrl:options.publicBaseUrl??'https://example.invalid',now:options.now});
   await app.ready();
   const e=event();
   const published=await app.inject({method:'POST',url:'/api/admin/events',headers:auth,payload:{operationId:randomUUID(),expectedVersion:0,event:e}});
@@ -26,6 +26,93 @@ async function invite(app: ReturnType<typeof buildApp>, e:EventView, kind='perso
 }
 const answer=(e:EventView, extra:Record<string,unknown>={})=>({operationId:randomUUID(),expectedVersion:0,eventVersion:e.version,name:'예시 회원',rsvp:'attending',noticeAcknowledged:true,selectedOptions:['date-a'],...extra});
 const bearer=(token:string)=>({authorization:`Bearer ${token}`});
+
+test('admin roster reads only a validated private snapshot',async t=>{
+  const dir=mkdtempSync(join(tmpdir(),'companion-roster-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
+  const rosterPath=join(dir,'eligible-members.json');
+  const member={studentId:'20260001',name:'가상 회원',phone:'010-0000-0000',generation:'27기'};
+  const snapshot={source:'coms-eligible-members',updatedAt:'2026-10-14T00:00:00Z',members:[member]};
+  writeFileSync(rosterPath,JSON.stringify(snapshot));
+  const app=buildApp({adminToken,encryptionKey:key,databasePath:':memory:',publicBaseUrl:'https://example.invalid',rosterPath});t.after(()=>app.close());
+  assert.equal((await app.inject('/api/admin/roster')).statusCode,401);
+  assert.equal((await app.inject({url:'/api/admin/roster',headers:bearer('wrong')})).statusCode,401);
+  const reply=await app.inject({url:'/api/admin/roster',headers:auth});
+  assert.equal(reply.statusCode,200,reply.body);
+  assert.deepEqual(reply.json(),snapshot);
+  assert.equal(reply.headers['cache-control'],'no-store');
+});
+
+test('unavailable or malformed roster returns a safe 503 without exposing member data',async t=>{
+  const dir=mkdtempSync(join(tmpdir(),'companion-roster-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
+  const rosterPath=join(dir,'eligible-members.json');
+  const app=buildApp({adminToken,encryptionKey:key,databasePath:':memory:',publicBaseUrl:'https://example.invalid',rosterPath});t.after(()=>app.close());
+  const request=()=>app.inject({url:'/api/admin/roster',headers:auth});
+  assert.equal((await request()).statusCode,503);
+  const member={studentId:'20260001',name:'비공개 가상 회원',phone:'010-0000-0000',generation:'27기'};
+  const valid={source:'coms-eligible-members',updatedAt:'2026-10-14T00:00:00Z',members:[member]};
+  const invalid=[
+    '{broken',
+    JSON.stringify({...valid,source:'untrusted'}),
+    JSON.stringify({...valid,members:[member,{...member}]}),
+    JSON.stringify({...valid,members:[{...member,password:'secret'}]}),
+    JSON.stringify({...valid,members:[{...member,studentId:' '}]}),
+    ' '.repeat(1024*1024+1)
+  ];
+  for(const content of invalid){
+    writeFileSync(rosterPath,content);
+    const reply=await request();
+    assert.equal(reply.statusCode,503,reply.body);
+    assert.equal(reply.json().error.code,'ROSTER_UNAVAILABLE');
+    assert.ok(!reply.body.includes(member.name));
+    assert.ok(!reply.body.includes(member.phone));
+  }
+  const local=buildApp({adminToken,encryptionKey:key,databasePath:':memory:',publicBaseUrl:'http://localhost:3000'});t.after(()=>local.close());
+  assert.equal((await local.inject({url:'/api/admin/roster',headers:auth})).statusCode,503);
+});
+
+test('base-path links keep tokens in fragments and origin checks use only the origin',async t=>{
+  const {app,e}=await setup({publicBaseUrl:'https://coms.kw.ac.kr/companion/'});t.after(()=>app.close());
+  const link=await invite(app,e);
+  assert.equal(link.url,`https://coms.kw.ac.kr/companion/respond#${link.token}`);
+  const allowed=await app.inject({method:'POST',url:'/api/respond',headers:{...bearer(link.token),origin:'https://coms.kw.ac.kr'},payload:answer(e)});
+  assert.equal(allowed.statusCode,200,allowed.body);
+  for(const origin of ['https://elsewhere.invalid','https://coms.kw.ac.kr/companion']){
+    const denied=await app.inject({method:'POST',url:'/api/respond',headers:{...bearer(link.token),origin},payload:answer(e,{expectedVersion:1})});
+    assert.equal(denied.statusCode,403,origin);
+  }
+});
+
+test('public base URL rejects credentials, queries, fragments and unsafe paths',()=>{
+  const invalid=[
+    'https://user:pass@coms.kw.ac.kr/companion','https://coms.kw.ac.kr/companion?x=1',
+    'https://coms.kw.ac.kr/companion#x','https://coms.kw.ac.kr/companion?',
+    'https://coms.kw.ac.kr/companion%2fapi','https://coms.kw.ac.kr/%2e%2e/api',
+    'https://coms.kw.ac.kr/companion/../api','https://coms.kw.ac.kr/companion//api',
+    'https://coms.kw.ac.kr/companion\\api','http://coms.kw.ac.kr/companion'
+  ];
+  for(const publicBaseUrl of invalid)assert.throws(()=>buildApp({adminToken,encryptionKey:key,databasePath:':memory:',publicBaseUrl}),undefined,publicBaseUrl);
+  const local=buildApp({adminToken,encryptionKey:key,databasePath:':memory:',publicBaseUrl:'http://localhost:3000'});
+  return local.close();
+});
+
+test('loopback proxy trust separates clients and ignores forwarded addresses from untrusted peers',async t=>{
+  const config={adminToken,encryptionKey:key,databasePath:':memory:',publicBaseUrl:'https://coms.kw.ac.kr/companion',rateLimit:2};
+  const trusted=buildApp({...config,trustProxy:'loopback'});t.after(()=>trusted.close());
+  const health=(app:ReturnType<typeof buildApp>,remoteAddress:string,forwarded:string)=>app.inject({url:'/api/health',remoteAddress,headers:{'x-forwarded-for':forwarded}});
+  assert.equal((await health(trusted,'127.0.0.1','198.51.100.1')).statusCode,200);
+  assert.equal((await health(trusted,'127.0.0.1','198.51.100.1')).statusCode,200);
+  assert.equal((await health(trusted,'127.0.0.1','198.51.100.2')).statusCode,200);
+  assert.equal((await health(trusted,'127.0.0.1','198.51.100.1')).statusCode,429);
+  assert.equal((await health(trusted,'::1','198.51.100.3')).statusCode,200);
+  assert.equal((await health(trusted,'203.0.113.5','198.51.100.10')).statusCode,200);
+  assert.equal((await health(trusted,'203.0.113.5','198.51.100.11')).statusCode,200);
+  assert.equal((await health(trusted,'203.0.113.5','198.51.100.12')).statusCode,429);
+
+  const defaultTrust=buildApp(config);t.after(()=>defaultTrust.close());
+  assert.equal((await health(defaultTrust,'127.0.0.1','198.51.100.1')).statusCode,200);
+  assert.equal((await health(defaultTrust,'127.0.0.1','198.51.100.2')).statusCode,200);
+  assert.equal((await health(defaultTrust,'127.0.0.1','198.51.100.3')).statusCode,429);
+});
 
 test('auth required and GET/preview never writes an RSVP or acknowledgement',async t=>{
   const {app,e}=await setup();t.after(()=>app.close());

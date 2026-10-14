@@ -47,5 +47,7 @@ artifacts/
 *.comsbak
 .playwright-mcp/
 *.tsbuildinfo
+__pycache__/
+*.pyc
 playwright-report/
 test-results/

@@ -1,0 +1,39 @@
+name: coms-companion
+services:
+  response:
+    image: coms-companion:${SOURCE_COMMIT:-local}
+    container_name: coms-companion
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?Set the public HTTPS base URL}
+        SOURCE_COMMIT: ${SOURCE_COMMIT:-local}
+    env_file:
+      - ${COMPANION_ENV_FILE:?Set the private environment file path}
+    environment:
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?Set the public HTTPS base URL}
+      HOST: 127.0.0.1
+      PORT: "3200"
+      TRUST_PROXY: loopback
+      DATABASE_PATH: /app/data/companion.sqlite
+      ROSTER_PATH: /app/roster/eligible-members.json
+    network_mode: host
+    volumes:
+      - ${COMPANION_DATA_DIR:?Set the persistent database directory}:/app/data
+      - ${COMPANION_ROSTER_DIR:?Set the private roster directory}:/app/roster:ro
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 128
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3200/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
